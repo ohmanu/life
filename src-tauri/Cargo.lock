@@ -2243,7 +2243,6 @@ version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
 dependencies = [
- "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -2252,18 +2251,22 @@ dependencies = [
 name = "life"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "chrono",
+ "getrandom 0.3.4",
  "keyring",
  "log",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "sqlite3mc-src",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-log",
  "tauri-plugin-single-instance",
+ "tempfile",
  "tokio",
 ]
 
@@ -3881,6 +3884,12 @@ dependencies = [
  "libc",
  "system-deps",
 ]
+
+[[package]]
+name = "sqlite3mc-src"
+version = "207.1.0+sqlite3mc-2.7.1-sqlite-3.54.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cd0a167580dee96e15ecb53f14ee555fa29ecb391042e7e3fca86af43d6ceaa"
 
 [[package]]
 name = "stable_deref_trait"

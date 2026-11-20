@@ -17,6 +17,18 @@ struct SourceStatus<T> {
     snapshot: Option<T>,
 }
 
+/// Clave de cifrado de `life.db`: se crea la primera vez y se guarda en el
+/// Administrador de credenciales de Windows. Nunca toca el disco ni la interfaz.
+fn db_key() -> Result<String, String> {
+    const NAME: &str = "db_key";
+    if let Some(k) = secrets::get(NAME)? {
+        return Ok(k);
+    }
+    let k = db::new_key();
+    secrets::set(NAME, &k)?;
+    Ok(k)
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -107,7 +119,8 @@ pub fn run() {
             }
 
             let dir = app.path().app_data_dir()?;
-            let conn = db::open(&dir).map_err(|e| format!("No se pudo abrir life.db: {e}"))?;
+            let key = db_key().map_err(|e| format!("No se pudo leer la clave de life.db: {e}"))?;
+            let conn = db::open(&dir, &key).map_err(|e| format!("No se pudo abrir life.db: {e}"))?;
             app.manage(Db(Mutex::new(conn)));
 
             // Bandeja del sistema

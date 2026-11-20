@@ -21,7 +21,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 ## Stack
 
 - Interfaz: Astro 7 estático + TypeScript estricto + CSS propio. `src/pages/index.astro` (estructura), `src/scripts/app.ts` (lógica, gráficas SVG, llamadas a Rust). Fuera de Tauri se pinta en modo demo con datos de ejemplo.
-- Núcleo: Rust en `src-tauri/`. `lib.rs` (comandos, bandeja, arranque, sincronización periódica), `db.rs` (SQLite `life.db` en `%APPDATA%\com.glutamato.life`, migraciones añadidas al final de `MIGRATIONS`), `github.rs`, `secrets.rs`.
+- Núcleo: Rust en `src-tauri/`. `lib.rs` (comandos, bandeja, arranque, sincronización periódica), `db.rs` (SQLite `life.db` en `%APPDATA%\com.glutamato.life`, migraciones añadidas al final de `MIGRATIONS`; cifrada en formato SQLCipher 4 con SQLite3 Multiple Ciphers que compila `build.rs`, sin OpenSSL; clave `db_key` en las credenciales de Windows), `github.rs`, `secrets.rs`.
 - Ventana sin marco nativo (`decorations: false`): la barra de título es propia. Cerrar esconde en la bandeja; salir desde el menú de la bandeja. Arranque con Windows opcional (`--bandeja`).
 - Permisos de ventana y plugins en `src-tauri/capabilities/default.json`.
 
@@ -35,11 +35,12 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha salvo cifrado de `life.db`) · 1 Encargos (Gmail) · 2 Dinero (Revolut: CSV, luego Open Banking) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
+0 Base (hecha; falta probar el instalador) · 1 Encargos (Gmail) · 2 Dinero (Revolut: CSV, luego Open Banking) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
 
 ## Pendiente de la fase 0
 
-- Cifrar `life.db` (SQLCipher) con la clave en las credenciales de Windows.
+- Generar y probar el instalador (`npm run app:build`).
+- Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no.
 
 ## Convenciones
 
