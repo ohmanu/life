@@ -133,7 +133,9 @@ async fn sync_instagram(app: &AppHandle) -> Result<instagram::Snapshot, String> 
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
             .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::days(7))
     };
-    if renovar {
+    // Solo los tokens del inicio de sesión de Instagram se renuevan así; los de Unified login
+    // caducan según la configuración de la app (y se regeneran en el panel de Meta).
+    if renovar && instagram::es_token_ig(&token) {
         match instagram::renovar(&token).await {
             Ok(nuevo) => {
                 secrets::set(instagram::TOKEN, &nuevo)?;

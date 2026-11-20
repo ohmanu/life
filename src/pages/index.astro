@@ -282,15 +282,16 @@ const tabs = [
                 <div><h4>Instagram</h4><div class="state" id="ig-state">Sin conectar</div></div>
                 <div>
                   <div id="ig-help">
-                    <p>API oficial de Instagram, solo lectura (perfil, publicaciones y estadísticas). La cuenta tiene que ser de creador o empresa. Una vez:</p>
+                    <p>API oficial de Instagram, solo lectura (perfil, publicaciones y estadísticas). La cuenta tiene que ser de creador o empresa; no hace falta página de Facebook. Una vez:</p>
                     <ol class="steps">
-                      <li>En <span class="copy">developers.facebook.com/apps</span> crea una app con el caso de uso <b>Gestionar mensajes y contenido en Instagram</b>.</li>
-                      <li>En ese caso de uso, <b>Configuración de la API con inicio de sesión de Instagram</b> → <b>Generar identificadores de acceso</b> → <b>Añadir cuenta</b> y entra con tu Instagram. Si te llega una invitación de tester, acéptala en Instagram (Configuración → Apps y sitios web).</li>
-                      <li>Pulsa <b>Generar identificador</b>, copia el token y pégalo aquí. Dura 60 días y LIFE lo renueva sola cada semana.</li>
+                      <li>En <span class="copy">developers.facebook.com/apps</span> crea una app con el caso de uso <b>Gestionar mensajes y contenido en Instagram</b> y asígnale un <b>porfolio empresarial</b> (gratis; se crea en <span class="copy">business.facebook.com</span>).</li>
+                      <li>En el caso de uso, <b>API setup with Unified login</b> → <b>Crear configuración</b>: deja solo <span class="copy">instagram_basic</span> e <span class="copy">instagram_manage_insights</span>, la caducidad más larga que ofrezca y como dirección de redirección <span class="copy">https://localhost/life</span>.</li>
+                      <li>En <b>Generar identificadores de acceso</b> → <b>Añadir cuenta</b> con tu Instagram y acepta la invitación de tester en Instagram (Configuración → Apps y sitios web).</li>
+                      <li>Pulsa <b>Generar identificador</b>, copia el token y pégalo aquí.</li>
                     </ol>
                   </div>
                   <form class="field" id="ig-form" autocomplete="off">
-                    <input id="ig-token" type="password" placeholder="IGAA…" aria-label="Token de Instagram" spellcheck="false" />
+                    <input id="ig-token" type="password" placeholder="Token de acceso de Meta" aria-label="Token de Instagram" spellcheck="false" />
                     <button class="btn solid" type="submit" id="ig-connect">Conectar</button>
                   </form>
                   <div class="msg" id="ig-msg" role="status"></div>

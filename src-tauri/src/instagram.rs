@@ -1,12 +1,22 @@
-//! Instagram (cuenta profesional de creador) con la API oficial «Instagram API with Instagram
-//! Login». Solo lectura: permisos `instagram_business_basic` e `instagram_business_manage_insights`.
-//! El token (60 días) vive en las credenciales de Windows y LIFE lo renueva cada semana.
+//! Instagram (cuenta profesional de creador) con la API oficial. Solo lectura. Dos tipos de token:
+//! - «Unified login» (apps nuevas de Meta): token de usuario del sistema contra graph.facebook.com,
+//!   permisos `instagram_basic` e `instagram_manage_insights`. La cuenta sale de
+//!   `/me/assigned_instagram_accounts`. Su caducidad la fija la configuración de la app.
+//! - «Instagram Login» (apps anteriores, tokens `IGAA…`): graph.instagram.com, dura 60 días y
+//!   LIFE lo renueva cada semana.
+//! El token vive en las credenciales de Windows.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const TOKEN: &str = "ig_token";
-const API: &str = "https://graph.instagram.com/v24.0";
+const API_IG: &str = "https://graph.instagram.com/v24.0";
+const API_FB: &str = "https://graph.facebook.com/v24.0";
+
+/// Token del inicio de sesión de Instagram (los de Unified login son de otro tipo).
+pub fn es_token_ig(token: &str) -> bool {
+    token.starts_with("IG")
+}
 /// Publicaciones recientes de las que se piden estadísticas (una petición por publicación).
 const CON_ESTADISTICAS: usize = 24;
 
@@ -58,6 +68,7 @@ pub struct Snapshot {
 struct Api {
     http: reqwest::Client,
     token: String,
+    base: &'static str,
 }
 
 impl Api {
@@ -67,11 +78,12 @@ impl Api {
             .timeout(std::time::Duration::from_secs(25))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Self { http, token: token.to_string() })
+        let base = if es_token_ig(token) { API_IG } else { API_FB };
+        Ok(Self { http, token: token.to_string(), base })
     }
 
     async fn get(&self, path: &str, q: &[(&str, &str)]) -> Result<Value, String> {
-        let url = if path.starts_with("https://") { path.to_string() } else { format!("{API}{path}") };
+        let url = if path.starts_with("https://") { path.to_string() } else { format!("{}{path}", self.base) };
         let mut req = self.http.get(url).query(q);
         if !path.starts_with("https://") || !path.contains("access_token=") {
             req = req.query(&[("access_token", self.token.as_str())]);
@@ -86,6 +98,7 @@ impl Api {
         let code = v["error"]["code"].as_i64().unwrap_or(0);
         Err(match code {
             190 => "El token de Instagram no vale o ha caducado: genera otro en Meta for Developers.".into(),
+            10 | 200 => format!("Al token le falta un permiso (instagram_basic o instagram_manage_insights). {msg}"),
             4 | 17 | 32 | 613 => "Instagram limita las consultas ahora mismo. Prueba más tarde.".into(),
             _ => format!("Instagram respondió {status}. {msg}"),
         })
@@ -113,11 +126,22 @@ pub async fn renovar(token: &str) -> Result<String, String> {
 
 pub async fn fetch(token: &str) -> Result<Snapshot, String> {
     let api = Api::new(token)?;
-    let me = api
-        .get("/me", &[("fields", "user_id,username,name,account_type,followers_count,follows_count,media_count")])
-        .await?;
-    let tipo = me["account_type"].as_str().unwrap_or("");
-    if tipo == "PERSONAL" {
+    // Con Unified login, /me es el «usuario del sistema»: la cuenta de Instagram se busca aparte.
+    let yo = if es_token_ig(token) {
+        "/me".to_string()
+    } else {
+        let v = api.get("/me/assigned_instagram_accounts", &[("fields", "id,username")]).await?;
+        let id = v["data"].as_array().and_then(|l| l.first()).and_then(|a| a["id"].as_str())
+            .ok_or("El token no tiene ninguna cuenta de Instagram asignada. Añádela al generar el token.")?;
+        format!("/{id}")
+    };
+    let campos = if es_token_ig(token) {
+        "user_id,username,name,account_type,followers_count,follows_count,media_count"
+    } else {
+        "username,name,followers_count,follows_count,media_count"
+    };
+    let me = api.get(&yo, &[("fields", campos)]).await?;
+    if me["account_type"].as_str() == Some("PERSONAL") {
         return Err("La cuenta de Instagram es personal: pásala a creador en la app de Instagram.".into());
     }
     let mut snap = Snapshot {
@@ -133,7 +157,7 @@ pub async fn fetch(token: &str) -> Result<Snapshot, String> {
     // Publicaciones recientes.
     let media = api
         .get(
-            "/me/media",
+            &format!("{yo}/media"),
             &[("fields", "id,caption,media_type,media_product_type,timestamp,permalink,like_count,comments_count"), ("limit", "50")],
         )
         .await?;
@@ -176,7 +200,7 @@ pub async fn fetch(token: &str) -> Result<Snapshot, String> {
     let desde = hasta - 29 * 86400;
     let (desde_s, hasta_s) = (desde.to_string(), hasta.to_string());
     if let Ok(v) = api
-        .get("/me/insights", &[("metric", "reach"), ("period", "day"), ("metric_type", "time_series"), ("since", &desde_s), ("until", &hasta_s)])
+        .get(&format!("{yo}/insights"), &[("metric", "reach"), ("period", "day"), ("metric_type", "time_series"), ("since", &desde_s), ("until", &hasta_s)])
         .await
     {
         if let Some(vals) = v["data"].as_array().and_then(|d| d.first()).and_then(|m| m["values"].as_array()) {
@@ -188,7 +212,7 @@ pub async fn fetch(token: &str) -> Result<Snapshot, String> {
     }
     if let Ok(v) = api
         .get(
-            "/me/insights",
+            &format!("{yo}/insights"),
             &[("metric", "reach,views,accounts_engaged,total_interactions"), ("period", "day"), ("metric_type", "total_value"), ("since", &desde_s), ("until", &hasta_s)],
         )
         .await
@@ -199,7 +223,7 @@ pub async fn fetch(token: &str) -> Result<Snapshot, String> {
         snap.interactions_30 = metrica(&v, "total_interactions");
     }
     // Hora con más seguidores conectados (solo con 100 seguidores o más).
-    if let Ok(v) = api.get("/me/insights", &[("metric", "online_followers"), ("period", "lifetime")]).await {
+    if let Ok(v) = api.get(&format!("{yo}/insights"), &[("metric", "online_followers"), ("period", "lifetime")]).await {
         if let Some(obj) = v["data"].as_array().and_then(|d| d.first()).and_then(|m| m["values"].as_array()).and_then(|l| l.last()).and_then(|x| x["value"].as_object()) {
             let mut horas = vec![0i64; 24];
             for (h, n) in obj {
