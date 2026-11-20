@@ -271,6 +271,12 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
         Some(r) => format!("banco|{}|{r}", cuenta.uid),
         None => format!("banco|{}|{fecha}|{descripcion}|{importe:.2}|{divisa}", cuenta.uid),
     });
+    // En un traspaso entre tus cuentas, la otra parte suele ser tu propio nombre: el concepto
+    // («To Cuenta con mejora activada») dice más y permite reconocer la hucha.
+    let descripcion = match (&concepto, interno) {
+        (Some(c), true) => c.trim().to_string(),
+        _ => descripcion,
+    };
     Some(Mov {
         id,
         comercio: comercio(&descripcion),

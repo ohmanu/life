@@ -335,6 +335,88 @@ struct DineroView {
     importado: Option<String>,
     archivo: Option<String>,
     banco: BancoView,
+    patrimonio: Patrimonio,
+}
+
+/// Lo que Open Banking no da: el oro y los ajustes a mano de la hucha.
+#[derive(Serialize, Default)]
+struct Patrimonio {
+    oro_onzas: Option<f64>,
+    oro_coste: Option<f64>,
+    /// Valor según el último resumen del ejercicio y su fecha.
+    oro_valor_resumen: Option<f64>,
+    oro_fecha: Option<String>,
+    /// Precio de la onza en euros y cuándo se consultó.
+    oro_precio: Option<f64>,
+    oro_precio_fecha: Option<String>,
+    /// Saldo de la hucha que pusiste a mano y cuándo.
+    hucha_saldo: Option<f64>,
+    hucha_fecha: Option<String>,
+}
+
+fn patrimonio(conn: &rusqlite::Connection) -> Patrimonio {
+    let s = |k: &str| db::ajuste(conn, k).ok().flatten();
+    let n = |k: &str| s(k).and_then(|v| v.parse::<f64>().ok());
+    Patrimonio {
+        oro_onzas: n("oro_onzas"),
+        oro_coste: n("oro_coste"),
+        oro_valor_resumen: n("oro_valor"),
+        oro_fecha: s("oro_fecha"),
+        oro_precio: n("oro_precio"),
+        oro_precio_fecha: s("oro_precio_fecha"),
+        hucha_saldo: n("hucha_saldo"),
+        hucha_fecha: s("hucha_fecha"),
+    }
+}
+
+/// Precio de la onza de oro en euros (api.gold-api.com, sin clave; no se envía nada tuyo).
+async fn precio_oro() -> Result<f64, String> {
+    let v: serde_json::Value = reqwest::Client::builder()
+        .user_agent("LIFE")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get("https://api.gold-api.com/price/XAU/EUR")
+        .send()
+        .await
+        .map_err(|e| format!("Sin conexión con el precio del oro: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("Precio del oro ilegible: {e}"))?;
+    match (v["currency"].as_str(), v["price"].as_f64()) {
+        (Some("EUR"), Some(p)) if p > 0.0 => Ok(p),
+        _ => Err("El servicio del precio del oro respondió algo inesperado.".into()),
+    }
+}
+
+async fn actualizar_oro(app: &AppHandle) -> Result<(), String> {
+    let p = precio_oro().await?;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::set_ajuste(&conn, "oro_precio", &p.to_string()).map_err(|e| e.to_string())?;
+    db::set_ajuste(&conn, "oro_precio_fecha", &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Ajuste a mano: onzas de oro (las que muestra Revolut) y saldo de la hucha hoy.
+#[tauri::command]
+async fn patrimonio_ajustar(app: AppHandle, oro_onzas: Option<f64>, hucha: Option<f64>) -> Result<DineroView, String> {
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        let e = |e: rusqlite::Error| e.to_string();
+        if let Some(o) = oro_onzas.filter(|o| *o >= 0.0) {
+            db::set_ajuste(&conn, "oro_onzas", &o.to_string()).map_err(e)?;
+        }
+        if let Some(h) = hucha.filter(|h| *h >= 0.0) {
+            db::set_ajuste(&conn, "hucha_saldo", &h.to_string()).map_err(e)?;
+            db::set_ajuste(&conn, "hucha_fecha", &chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()).map_err(e)?;
+        }
+    }
+    let _ = actualizar_oro(&app).await;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    dinero_view(&conn)
 }
 
 #[derive(Serialize)]
@@ -354,6 +436,8 @@ struct BancoView {
 #[derive(Serialize)]
 struct Importe {
     nuevos: usize,
+    /// Del CSV, ya cubiertos por el banco: no se guardan.
+    solapados: usize,
     actualizados: usize,
     ignorados: usize,
     leidos: usize,
@@ -368,6 +452,7 @@ fn dinero_view(conn: &rusqlite::Connection) -> Result<DineroView, String> {
         importado: db::ajuste(conn, "revolut_importado").map_err(e)?,
         archivo: db::ajuste(conn, "revolut_archivo").map_err(e)?,
         banco: banco_view(conn)?,
+        patrimonio: patrimonio(conn),
     })
 }
 
@@ -556,19 +641,7 @@ async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
     };
     db::upsert_movs(&mut conn, &movs, &now).map_err(|e| e.to_string())?;
     // Lo del banco manda sobre lo importado por CSV en el mismo periodo y producto.
-    let mut desde_por_producto: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    for m in &movs {
-        let d = desde_por_producto.entry(m.producto.as_str()).or_insert(m.fecha.as_str());
-        if m.fecha.as_str() < *d {
-            *d = m.fecha.as_str();
-        }
-    }
-    for (producto, d) in desde_por_producto {
-        let _ = conn.execute(
-            "DELETE FROM transacciones WHERE fuente = 'csv' AND producto = ?1 AND fecha >= ?2",
-            rusqlite::params![producto, d],
-        );
-    }
+    db::retirar_csv_solapado(&conn).map_err(|e| e.to_string())?;
     let hasta = (chrono::Local::now() - chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
     let e = |e: rusqlite::Error| e.to_string();
     db::set_ajuste(&conn, "banco_desde", &hasta).map_err(e)?;
@@ -650,16 +723,38 @@ async fn dinero_importar(app: AppHandle) -> Result<Option<Importe>, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("No se pudo leer el archivo: {e}"))?;
     let parsed = revolut::parse(&String::from_utf8_lossy(&bytes))?;
 
+    let (nuevos, actualizados, solapados) = {
     let state = app.state::<Db>();
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     let now = gmail::utc(chrono::Utc::now());
     let (nuevos, actualizados) = db::upsert_movs(&mut conn, &parsed.movs, &now).map_err(|e| e.to_string())?;
+    // Si ya hay datos del banco, el CSV no los duplica.
+    let solapados = db::retirar_csv_solapado(&conn).map_err(|e| e.to_string())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     db::set_ajuste(&conn, "revolut_importado", &now).map_err(|e| e.to_string())?;
     db::set_ajuste(&conn, "revolut_archivo", &name).map_err(|e| e.to_string())?;
+    if let Some(o) = &parsed.oro {
+        let e = |e: rusqlite::Error| e.to_string();
+        db::set_ajuste(&conn, "oro_onzas", &o.onzas.to_string()).map_err(e)?;
+        db::set_ajuste(&conn, "oro_coste", &o.coste.to_string()).map_err(e)?;
+        db::set_ajuste(&conn, "oro_fecha", &o.fecha).map_err(e)?;
+        if let Some(v) = o.valor {
+            db::set_ajuste(&conn, "oro_valor", &v.to_string()).map_err(e)?;
+        }
+    }
     db::log_sync(&conn, "revolut", true, Some(&format!("{name}: {nuevos} nuevos, {actualizados} actualizados")));
+    (nuevos, actualizados, solapados)
+    };
+    if parsed.oro.is_some() {
+        if let Err(e) = actualizar_oro(&app).await {
+            log::warn!("oro: {e}");
+        }
+    }
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
     Ok(Some(Importe {
-        nuevos,
+        nuevos: nuevos.saturating_sub(solapados),
+        solapados,
         actualizados,
         ignorados: parsed.ignorados,
         leidos: parsed.movs.len(),
@@ -686,6 +781,17 @@ fn dinero_borrar(app: AppHandle) -> Result<DineroView, String> {
 }
 
 async fn sync_all(app: &AppHandle, github_too: bool) {
+    // Precio del oro cada hora, solo si tienes oro.
+    let tiene_oro = {
+        let state = app.state::<Db>();
+        let conn = state.0.lock();
+        conn.ok().and_then(|c| db::ajuste(&c, "oro_onzas").ok().flatten()).and_then(|v| v.parse::<f64>().ok()).is_some_and(|o| o > 0.0)
+    };
+    if tiene_oro && github_too {
+        if let Err(e) = actualizar_oro(app).await {
+            log::warn!("oro: {e}");
+        }
+    }
     // Banco: cada 6 h como mucho (PSD2 permite unas 4 consultas al día sin ti delante).
     if matches!(secrets::get(banco::SESSION), Ok(Some(_))) {
         let toca = {
@@ -809,7 +915,8 @@ pub fn run() {
             banco_configurar,
             banco_conectar,
             banco_sync,
-            banco_desconectar
+            banco_desconectar,
+            patrimonio_ajustar
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");

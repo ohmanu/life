@@ -98,6 +98,10 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE transacciones ADD COLUMN fuente TEXT NOT NULL DEFAULT 'csv';
     ",
+    // 5 · volver a leer todo el histórico del banco una vez (descripciones de traspasos mejoradas)
+    "
+    DELETE FROM ajustes WHERE clave = 'banco_desde';
+    ",
 ];
 
 /// Cabecera de un SQLite sin cifrar. Un archivo cifrado empieza por bytes aleatorios.
@@ -296,31 +300,36 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
     let tx = conn.transaction()?;
     let (mut nuevos, mut cambiados) = (0, 0);
     {
-        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe FROM transacciones WHERE id = ?1")?;
+        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe, descripcion, interno FROM transacciones WHERE id = ?1")?;
         let mut ins = tx.prepare(
             "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
                                         comision, divisa, estado, saldo, interno, importado, fuente)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
         let mut upd = tx.prepare(
-            "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5, importe = ?6, fecha = ?7
+            "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5, importe = ?6, fecha = ?7,
+                    descripcion = ?8, comercio = ?9, tipo = ?10, interno = ?11
              WHERE id = ?1",
         )?;
         for m in movs {
-            let old: Option<(String, Option<String>, Option<f64>, f64)> =
-                prev.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?;
+            type Previo = (String, Option<String>, Option<f64>, f64, String, i64);
+            let old: Option<Previo> = prev
+                .query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+                .optional()?;
             match old {
                 None => {
                     ins.execute(params![m.id, m.fecha, m.completada, m.tipo, m.producto, m.descripcion, m.comercio,
                                         m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando, m.fuente])?;
                     nuevos += 1;
                 }
-                // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se actualizan.
-                Some((estado, completada, saldo, importe)) => {
+                // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se
+                // actualizan. Descripción e «interno» también, por si LIFE aprende a leerlos mejor.
+                Some((estado, completada, saldo, importe, descripcion, interno)) => {
                     if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo)
-                        || (importe - m.importe).abs() > 0.004
+                        || (importe - m.importe).abs() > 0.004 || descripcion != m.descripcion || (interno != 0) != m.interno
                     {
-                        upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision, m.importe, m.fecha])?;
+                        upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision, m.importe, m.fecha,
+                                            m.descripcion, m.comercio, m.tipo, m.interno as i64])?;
                         cambiados += 1;
                     }
                 }
@@ -365,6 +374,16 @@ pub fn set_categoria(conn: &Connection, comercio: &str, categoria: &str) -> rusq
         )?;
     }
     Ok(())
+}
+
+/// Lo del banco manda: los movimientos de CSV de un producto desde la primera fecha que da el
+/// banco para ese producto se retiran (lo anterior se queda: el banco no llega tan atrás).
+pub fn retirar_csv_solapado(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM transacciones WHERE fuente = 'csv' AND fecha >= (
+             SELECT MIN(b.fecha) FROM transacciones b WHERE b.fuente = 'banco' AND b.producto = transacciones.producto)",
+        [],
+    )
 }
 
 /// Nombres de tus huchas («Cuenta con mejora activada»), sacados de los intereses importados por CSV.
@@ -430,6 +449,25 @@ mod tests {
         assert_eq!(all[1].saldo, Some(97.5));
         set_categoria(&c, "cafe", "Restaurantes").unwrap();
         assert_eq!(categorias(&c).unwrap().get("cafe").map(String::as_str), Some("Restaurantes"));
+    }
+
+    #[test]
+    fn el_banco_manda_sobre_el_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = open(dir.path(), &new_key()).unwrap();
+        let h = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
+";
+        let csv = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-01 10:00:00,,Viejo,-1,0,EUR,COMPLETED,
+CARD_PAYMENT,Current,2026-11-10 10:00:00,,Nuevo,-2,0,EUR,COMPLETED,")).unwrap();
+        upsert_movs(&mut c, &csv.movs, "t").unwrap();
+        let mut banco = csv.movs[1].clone();
+        banco.id = "b1".into();
+        banco.fuente = "banco".into();
+        banco.fecha = "2026-11-01 00:00:00".into();
+        upsert_movs(&mut c, &[banco], "t").unwrap();
+        assert_eq!(retirar_csv_solapado(&c).unwrap(), 1);
+        let quedan: Vec<_> = movs(&c).unwrap().into_iter().map(|m| m.descripcion).collect();
+        assert_eq!(quedan, vec!["Viejo", "Nuevo"], "el CSV anterior al banco se queda; el solapado se va");
     }
 
     #[test]

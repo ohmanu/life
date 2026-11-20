@@ -129,12 +129,24 @@ const tabs = [
             </div>
             <div class="cell c-12">
               <div class="kpis five">
-                <div class="kpi"><div class="k">Saldo</div><div class="v money" data-m="saldo">—</div><div class="d money" data-m="saldo_d"></div></div>
+                <div class="kpi"><div class="k">Patrimonio</div><div class="v money" data-m="saldo">—</div><div class="d money" data-m="saldo_d"></div></div>
                 <div class="kpi"><div class="k" data-m="ing_k">Ingresos</div><div class="v money" data-m="ing">—</div><div class="d money" data-m="ing_d"></div></div>
                 <div class="kpi"><div class="k" data-m="gas_k">Gastos</div><div class="v money" data-m="gas">—</div><div class="d money" data-m="gas_d"></div></div>
                 <div class="kpi"><div class="k">Tasa de ahorro</div><div class="v" data-m="tasa">—</div><div class="d" data-m="tasa_d"></div></div>
-                <div class="kpi"><div class="k">Colchón</div><div class="v" data-m="colchon">—</div><div class="d">al gasto medio de 6 meses</div></div>
+                <div class="kpi"><div class="k">Colchón</div><div class="v" data-m="colchon">—</div><div class="d">cuenta + hucha · gasto medio de 6 meses</div></div>
               </div>
+            </div>
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Patrimonio</h3><span class="jp">資産</span></div>
+              <div class="patri" id="patri"></div>
+              <form class="field patri-form" id="patri-form" autocomplete="off" hidden>
+                <label class="lbl">Saldo de la hucha hoy (€)<input id="pf-hucha" type="number" step="0.01" min="0" inputmode="decimal" /></label>
+                <label class="lbl">Onzas de oro (XAU), las que muestra Revolut<input id="pf-oro" type="number" step="0.000001" min="0" inputmode="decimal" /></label>
+                <button class="btn solid" type="submit" id="pf-save">Guardar</button>
+                <button class="btn" type="button" id="pf-cancel">Cancelar</button>
+              </form>
+              <div class="msg" id="patri-msg" role="status"></div>
+              <div class="foot"><span id="patri-foot"></span><button class="btn" type="button" id="patri-edit">Ajustar a mano</button></div>
             </div>
             <div class="cell c-7">
               <div class="cell-h"><h3>Ingresos y gastos · 12 meses</h3><span class="jp">収支</span></div>

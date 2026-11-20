@@ -446,12 +446,17 @@ type Banco = {
   configurado: boolean; conectado: boolean; app_id: string | null; valido_hasta: string | null;
   sincronizado: string | null; cuentas: number; error: string | null;
 };
-type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null; banco: Banco };
+type Patrimonio = {
+  oro_onzas: number | null; oro_coste: number | null; oro_valor_resumen: number | null; oro_fecha: string | null;
+  oro_precio: number | null; oro_precio_fecha: string | null; hucha_saldo: number | null; hucha_fecha: string | null;
+};
+const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null };
+type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null; banco: Banco; patrimonio: Patrimonio };
 const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
-type Importe = { nuevos: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
+type Importe = { nuevos: number; solapados: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
 type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
 
-let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null, banco: SIN_BANCO };
+let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null, banco: SIN_BANCO, patrimonio: SIN_PATRIMONIO };
 let mesSel: string | null = null;  // AAAA-MM
 let subsCache: Sub[] = [];
 
@@ -558,14 +563,72 @@ function porMes(list: Mov[]) {
 }
 
 /** Último saldo de cada producto en euros. */
-function saldos(list: Mov[]) {
-  const last = new Map<string, Mov>();
-  for (const m of list) if (m.saldo !== null && m.divisa === "EUR") last.set(m.producto, m);
-  const cuentaS = last.get("cuenta")?.saldo ?? 0;
-  let ahorro = 0;
-  for (const [p, m] of last) if (p !== "cuenta") ahorro += m.saldo ?? 0;
-  const fecha = [...last.values()].map(m => m.fecha).sort().pop() ?? null;
-  return { total: cuentaS + ahorro, cuenta: cuentaS, ahorro, fecha, hay: last.size > 0 };
+/** Hucha: Open Banking no la da. Último saldo conocido (resumen del ejercicio o puesto a mano)
+ *  + traspasos desde la cuenta después de esa fecha + intereses estimados al ritmo del último mes. */
+function huchaEstimada(list: Mov[], p: Patrimonio) {
+  const ahorro = list.filter(m => m.producto !== "cuenta" && m.divisa === "EUR");
+  const conSaldo = [...ahorro].reverse().find(m => m.saldo !== null);
+  const bases = [
+    conSaldo ? { saldo: conSaldo.saldo!, fecha: conSaldo.fecha, manual: false } : null,
+    p.hucha_saldo !== null && p.hucha_fecha ? { saldo: p.hucha_saldo, fecha: p.hucha_fecha, manual: true } : null,
+  ].filter(Boolean) as { saldo: number; fecha: string; manual: boolean }[];
+  if (!bases.length) return null;
+  const base = bases.sort((a, b) => a.fecha.localeCompare(b.fecha)).pop()!;
+  const dia = base.fecha.slice(0, 10);
+  const nombres = [...new Set(ahorro.map(m => m.descripcion.match(/^Intereses de (.+)$/)?.[1]?.toLowerCase()).filter(Boolean))] as string[];
+  const esHucha = (m: Mov) => {
+    const d = m.descripcion.toLowerCase();
+    return nombres.some(n => n.length >= 4 && d.includes(n)) || /hucha|savings|pocket|vault|ahorros/.test(d);
+  };
+  const traspasos = list
+    .filter(m => m.producto === "cuenta" && m.divisa === "EUR" && m.fecha.slice(0, 10) > dia && catOf(m) === "Interno" && esHucha(m))
+    .reduce((s, m) => s - m.importe, 0);
+  const ultInt = [...ahorro].reverse().find(m => m.descripcion.startsWith("Intereses de"));
+  const diario = ultInt ? ultInt.importe / Math.max(1, +ultInt.fecha.slice(8, 10)) : 0;
+  const dias = Math.max(0, Math.floor((Date.now() - fechaDe(base.fecha).getTime()) / DIA));
+  const intereses = diario * dias;
+  return { saldo: base.saldo + traspasos + intereses, base, traspasos, intereses, estimado: traspasos !== 0 || intereses > 0 };
+}
+
+function oroValor(p: Patrimonio) {
+  if (p.oro_onzas === null || p.oro_onzas <= 0) return null;
+  const vivo = p.oro_precio !== null;
+  const valor = vivo ? p.oro_onzas * p.oro_precio! : p.oro_valor_resumen;
+  if (valor === null) return null;
+  return { valor, onzas: p.oro_onzas, precio: p.oro_precio, vivo, coste: p.oro_coste, ganancia: p.oro_coste ? valor - p.oro_coste : null };
+}
+
+function saldos(list: Mov[], p: Patrimonio) {
+  let ultima: Mov | undefined;
+  for (const m of list) if (m.saldo !== null && m.divisa === "EUR" && m.producto === "cuenta") ultima = m;
+  const cuentaS = ultima?.saldo ?? 0;
+  const h = huchaEstimada(list, p);
+  const o = oroValor(p);
+  const ahorro = h?.saldo ?? 0, oro = o?.valor ?? 0;
+  return {
+    total: cuentaS + ahorro + oro, liquido: cuentaS + ahorro, cuenta: cuentaS, ahorro, oro, hucha: h, oroInfo: o,
+    fecha: ultima?.fecha ?? null, hay: !!ultima || !!h || !!o,
+  };
+}
+
+function patri(s: ReturnType<typeof saldos>) {
+  const el = $("patri");
+  if (!s.hay) { el.innerHTML = `<p class="muted">Sin datos. Importa el resumen del ejercicio o conecta Revolut en F5.</p>`; $("patri-foot").textContent = ""; return; }
+  const h = s.hucha, o = s.oroInfo;
+  const pct = (a: number, b: number) => `${a >= 0 ? "+" : ""}${fmt(a / b * 100, 1)} %`;
+  el.innerHTML = `
+    <div><span class="k">Cuenta</span><span class="v money">${eur(s.cuenta, 2)}</span>
+      <span class="d muted">${s.fecha ? `saldo a ${ddmm(fechaDe(s.fecha))} · ${rvState.banco.conectado ? "banco" : "CSV"}` : "sin saldo"}</span></div>
+    <div><span class="k">Hucha${h?.estimado ? " ≈" : ""}</span><span class="v money">${h ? eur(h.saldo, 2) : "—"}</span>
+      <span class="d muted">${h ? `${h.base.manual ? "puesto a mano" : "resumen"} el ${ddmm(fechaDe(h.base.fecha))}: <span class="money">${eur(h.base.saldo, 2)}</span>` : "importa el resumen del ejercicio o ajústala a mano"}</span>
+      ${h && (h.traspasos || h.intereses > 0) ? `<span class="d muted">${h.traspasos ? `traspasos <span class="money">${h.traspasos > 0 ? "+" : ""}${fmt(h.traspasos, 2)} €</span>` : ""}${h.traspasos && h.intereses > 0 ? " · " : ""}${h.intereses > 0 ? `intereses ≈ <span class="money">+${fmt(h.intereses, 2)} €</span>` : ""}</span>` : ""}</div>
+    <div><span class="k">Oro</span><span class="v money">${o ? eur(o.valor, 2) : "—"}</span>
+      <span class="d muted">${o ? `${fmt(o.onzas, 6)} oz${o.precio ? ` × ${fmt(o.precio, 2)} €/oz` : " · valor del resumen"}` : "sin oro"}</span>
+      ${o?.ganancia !== null && o?.ganancia !== undefined && o.coste ? `<span class="d">costó <span class="money">${eur(o.coste)}</span> · <span class="${o.ganancia >= 0 ? "up" : "down"} money">${o.ganancia >= 0 ? "+" : ""}${fmt(o.ganancia, 2)} € (${pct(o.ganancia, o.coste)})</span></span>` : ""}</div>
+    <div class="tot"><span class="k">Total</span><span class="v money">${eur(s.total, 2)}</span>
+      <span class="d muted">líquido <span class="money">${eur(s.liquido)}</span> · oro ${s.total ? fmt(s.oro / s.total * 100, 1) : 0} %</span></div>`;
+  const pr = rvState.patrimonio?.oro_precio_fecha;
+  $("patri-foot").textContent = `ORO: API.GOLD-API.COM${pr ? ` · ${stamp(pr)}` : ""} · LA HUCHA SE ESTIMA HASTA EL PRÓXIMO RESUMEN O AJUSTE`;
 }
 
 const setM = (key: string, value: string, alarm = false) =>
@@ -716,10 +779,10 @@ function renderDinero(d: Dinero) {
     for (const [c, v] of x.cats) media.set(c, (media.get(c) ?? 0) + v / prev.length);
   }
   const has = list.length > 0;
-  const s = saldos(list);
+  const s = saldos(list, d.patrimonio ?? SIN_PATRIMONIO);
   const nombre = MESES[mesDe(mesSel).getMonth()];
   setM("saldo", s.hay ? eur(s.total) : "—");
-  setM("saldo_d", s.hay ? (s.ahorro ? `cuenta ${eur(s.cuenta)} · hucha ${eur(s.ahorro)}` : `a ${ddmm(fechaDe(s.fecha!))}`) : has ? "el CSV no trae saldo" : "importa el CSV en F3");
+  setM("saldo_d", s.hay ? [`cuenta ${eur(s.cuenta)}`, s.hucha ? `hucha ${s.hucha.estimado ? "≈" : ""}${eur(s.ahorro)}` : "", s.oroInfo ? `oro ${eur(s.oro)}` : ""].filter(Boolean).join(" · ") : has ? "el CSV no trae saldo" : "importa el CSV en F3");
   setM("ing_k", `Ingresos · ${nombre}`);
   setM("gas_k", `Gastos · ${nombre}`);
   setM("ing", has ? eur(m?.ing ?? 0) : "—");
@@ -732,7 +795,7 @@ function renderDinero(d: Dinero) {
   setM("tasa_d", tMedia.length ? `media 6 m: ${fmt(tMedia.reduce((a, b) => a + b, 0) / tMedia.length)} %` : "");
   const gas6 = conDatos.filter(k => k < now).slice(-6);
   const gasto6 = gas6.reduce((a, k) => a + meses.get(k)!.gas, 0) / (gas6.length || 1);
-  const colchon = s.hay && gasto6 > 0 ? s.total / gasto6 : null;
+  const colchon = s.hay && gasto6 > 0 ? s.liquido / gasto6 : null;
   setM("colchon", colchon === null ? "—" : `${fmt(colchon, 1)} meses`, colchon !== null && colchon < 1);
   setM("cats_h", `Gasto por categoría · ${nombre}`);
   setM("movs_h", `Movimientos · ${nombre}`);
@@ -740,6 +803,7 @@ function renderDinero(d: Dinero) {
   ($("m-next") as HTMLButtonElement).disabled = mesSel >= fin;
   ($("m-prev") as HTMLButtonElement).disabled = !has || mesSel <= (conDatos[0] ?? mesSel);
 
+  patri(s);
   flow(meses, keys);
   cats(m, media);
   movs(list);
@@ -857,7 +921,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-import]").forEach(b => b.add
     if (!r) { rvMsg(""); return; }
     mesSel = null;
     renderDinero(r.vista);
-    rvMsg(`${fmt(r.leidos)} leídos · ${fmt(r.nuevos)} nuevos · ${fmt(r.actualizados)} actualizados${r.ignorados ? ` · ${r.ignorados} revertidos o rechazados, fuera` : ""}.`, "ok");
+    rvMsg(`${fmt(r.leidos)} leídos · ${fmt(r.nuevos)} nuevos · ${fmt(r.actualizados)} actualizados${r.solapados ? ` · ${fmt(r.solapados)} ya los da el banco` : ""}${r.ignorados ? ` · ${r.ignorados} revertidos o rechazados, fuera` : ""}${r.vista.patrimonio?.oro_onzas ? ` · oro: ${fmt(r.vista.patrimonio.oro_onzas, 6)} oz` : ""}.`, "ok");
     countUp($("v-dinero"));
   } catch (err) { rvMsg(String(err), "err"); }
   finally { all.forEach(x => (x.disabled = false)); }
@@ -874,9 +938,45 @@ $("rv-off").addEventListener("click", async () => {
   }
   borrarArmado = 0;
   b.textContent = "Borrar movimientos";
-  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null, banco: rvState.banco }); return; }
+  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null, banco: rvState.banco, patrimonio: rvState.patrimonio }); return; }
   try { renderDinero(await invoke<Dinero>("dinero_borrar")); rvMsg("Movimientos borrados de life.db. Las categorías que elegiste se conservan.", "ok"); }
   catch (err) { rvMsg(String(err), "err"); }
+});
+
+/* ---------- patrimonio: ajuste a mano ---------- */
+const patriMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("patri-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+$("patri-edit").addEventListener("click", () => {
+  const f = $("patri-form");
+  f.hidden = !f.hidden;
+  if (f.hidden) return;
+  const s = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
+  $<HTMLInputElement>("pf-hucha").value = s.hucha ? s.hucha.saldo.toFixed(2) : "";
+  $<HTMLInputElement>("pf-oro").value = rvState.patrimonio?.oro_onzas?.toString() ?? "";
+  $<HTMLInputElement>("pf-hucha").focus();
+});
+$("pf-cancel").addEventListener("click", () => { $("patri-form").hidden = true; patriMsg(""); });
+$("patri-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const num = (id: string) => { const v = $<HTMLInputElement>(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
+  const hucha = num("pf-hucha"), oro = num("pf-oro");
+  if ((hucha !== null && !(hucha >= 0)) || (oro !== null && !(oro >= 0))) { patriMsg("Pon cifras positivas.", "err"); return; }
+  const prev = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
+  // Solo se guarda lo que cambió: si la hucha sigue igual que la estimación, no se fija a mano.
+  const huchaCambia = hucha !== null && (!prev.hucha || Math.abs(prev.hucha.saldo - hucha) >= .005);
+  const oroCambia = oro !== null && oro !== rvState.patrimonio?.oro_onzas;
+  if (!huchaCambia && !oroCambia) { $("patri-form").hidden = true; return; }
+  if (!TAURI) {
+    const now = new Date();
+    renderDinero({ ...rvState, patrimonio: { ...rvState.patrimonio, ...(huchaCambia ? { hucha_saldo: hucha, hucha_fecha: `${mesKey(now)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:00` } : {}), ...(oroCambia ? { oro_onzas: oro } : {}) } });
+    $("patri-form").hidden = true; patriMsg("Guardado (modo demo).", "ok"); return;
+  }
+  const btn = $<HTMLButtonElement>("pf-save");
+  btn.disabled = true; patriMsg("Guardando y consultando el precio del oro…");
+  try {
+    renderDinero(await invoke<Dinero>("patrimonio_ajustar", { oroOnzas: oroCambia ? oro : null, hucha: huchaCambia ? hucha : null }));
+    $("patri-form").hidden = true; patriMsg("Guardado.", "ok");
+  } catch (err) { patriMsg(String(err), "err"); }
+  finally { btn.disabled = false; }
 });
 
 /* ---------- datos de ejemplo fuera de la app ---------- */
@@ -919,7 +1019,8 @@ function demoDinero(): Dinero {
   }
   movimientos.sort((a, b) => a.fecha.localeCompare(b.fecha));
   return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: null,
-    banco: { configurado: true, conectado: true, app_id: "demo", valido_hasta: new Date(Date.now() + 172 * DIA).toISOString(), sincronizado: new Date().toISOString(), cuentas: 2, error: null } };
+    banco: { configurado: true, conectado: true, app_id: "demo", valido_hasta: new Date(Date.now() + 172 * DIA).toISOString(), sincronizado: new Date().toISOString(), cuentas: 2, error: null },
+    patrimonio: { ...SIN_PATRIMONIO, oro_onzas: 0.124945, oro_coste: 500, oro_valor_resumen: 404.39, oro_fecha: "2026-11-20", oro_precio: 3203.39, oro_precio_fecha: new Date().toISOString() } };
 }
 
 function demoGmail(): Gmail {

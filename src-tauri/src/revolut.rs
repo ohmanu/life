@@ -37,6 +37,20 @@ pub struct Parsed {
     pub movs: Vec<Mov>,
     /// Filas revertidas, rechazadas o sin fecha/importe.
     pub ignorados: usize,
+    /// Oro (materias primas) del resumen del ejercicio.
+    pub oro: Option<Oro>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Oro {
+    /// Onzas troy (XAU) en cartera.
+    pub onzas: f64,
+    /// Lo que costaron, en euros.
+    pub coste: f64,
+    /// Valor según Revolut al cierre del resumen.
+    pub valor: Option<f64>,
+    /// Fecha del cierre del resumen (AAAA-MM-DD).
+    pub fecha: String,
 }
 
 /// Minúsculas, sin tildes y solo letras y números: para comparar cabeceras y valores.
@@ -233,12 +247,16 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
     let hucha_n = hucha.as_deref().map(norm).filter(|h| h.len() >= 4);
 
     #[derive(PartialEq, Clone, Copy)]
-    enum Zona { Nada, ResumenAhorro, Corriente, Ahorro }
+    enum Zona { Nada, ResumenAhorro, ResumenOro, Corriente, Ahorro, Oro }
     let mut zona = Zona::Nada;
     let mut divisa = "EUR".to_string();
     let mut cols: Option<(usize, usize, Option<usize>, Option<usize>)> = None; // importe, descripción, saldo, comisión
     let mut interes_col: Option<usize> = None;
     let mut cierre_hucha: Option<f64> = None;
+    let mut cierre_oro: Option<f64> = None;
+    let (mut onzas, mut coste, mut hay_oro) = (0.0_f64, 0.0_f64, false);
+    // Columnas de la tabla de oro: (unidades, valor, es compra).
+    let mut oro_cols: Option<(usize, Option<usize>, bool)> = None;
     let mut intereses: Vec<(String, f64)> = Vec::new();
     let mut out = Parsed::default();
     let mut seen: HashMap<String, u32> = HashMap::new();
@@ -248,11 +266,13 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
         let solo = r.iter().skip(1).all(String::is_empty);
         if solo && !a.is_empty() {
             let n = norm(a);
+            let sub = n.starts_with("estado") || n.starts_with("extracto");
             if n.contains("resumenes") {
-                zona = if n.contains("ahorro") { Zona::ResumenAhorro } else { Zona::Nada };
-            } else if n.contains("estadodetransacciones") || n.contains("transactionstatements") {
-                zona = if n.contains("corriente") { Zona::Corriente } else if n.contains("ahorro") { Zona::Ahorro } else { Zona::Nada };
+                zona = if n.contains("ahorro") { Zona::ResumenAhorro } else if n.contains("materiaprima") { Zona::ResumenOro } else { Zona::Nada };
+            } else if !sub && (n.contains("estadodetransacciones") || n.contains("transactionstatements")) {
+                zona = if n.contains("corriente") { Zona::Corriente } else if n.contains("ahorro") { Zona::Ahorro } else if n.contains("materiaprima") { Zona::Oro } else { Zona::Nada };
             }
+            oro_cols = None;
             // «Cuenta personal (EUR)», «Ahorros  (EUR)»: la divisa del bloque.
             if let (Some(i), Some(j)) = (a.rfind('('), a.rfind(')')) {
                 let d = a[i + 1..j.max(i + 1)].trim();
@@ -264,9 +284,39 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
             interes_col = None;
             continue;
         }
-        if zona == Zona::ResumenAhorro && cierre_hucha.is_none() {
+        if matches!(zona, Zona::ResumenAhorro | Zona::ResumenOro) {
             if let Some(i) = r.iter().position(|x| norm(x) == "saldodecierre") {
-                cierre_hucha = amount(f(r, i + 1));
+                let slot = if zona == Zona::ResumenAhorro { &mut cierre_hucha } else { &mut cierre_oro };
+                if slot.is_none() {
+                    *slot = amount(f(r, i + 1));
+                }
+            }
+            continue;
+        }
+        if zona == Zona::Oro {
+            let h: Vec<String> = r.iter().map(|x| norm(x)).collect();
+            if let Some(u) = h.iter().position(|x| x == "unidadescompradas") {
+                oro_cols = Some((u, h.iter().position(|x| x.starts_with("valordelacompra")), true));
+                continue;
+            }
+            if let Some(u) = h.iter().position(|x| x == "unidadesvendidas") {
+                oro_cols = Some((u, None, false));
+                continue;
+            }
+            // Filas de datos: empiezan por una fecha y son de XAU.
+            if let Some((u, v, compra)) = oro_cols {
+                if a.starts_with(|c: char| c.is_ascii_digit()) && r.iter().any(|x| x.trim() == "XAU") {
+                    if let Some(units) = amount(f(r, u)).map(f64::abs) {
+                        hay_oro = true;
+                        if compra {
+                            onzas += units;
+                            coste += v.and_then(|v| amount(f(r, v))).map(f64::abs).unwrap_or(0.0);
+                        } else if onzas > 0.0 {
+                            coste -= coste * (units / onzas).min(1.0);
+                            onzas -= units;
+                        }
+                    }
+                }
             }
             continue;
         }
@@ -367,6 +417,14 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
         });
     }
     out.movs.sort_by(|a, b| a.fecha.cmp(&b.fecha));
+    if hay_oro || cierre_oro.is_some_and(|v| v > 0.0) {
+        out.oro = Some(Oro {
+            onzas: (onzas.max(0.0) * 1e6).round() / 1e6,
+            coste: (coste.max(0.0) * 100.0).round() / 100.0,
+            valor: cierre_oro,
+            fecha: out.movs.last().map(|m| m.fecha[..10].to_string()).unwrap_or_default(),
+        });
+    }
     if out.movs.is_empty() {
         return Err("Este resumen de Revolut no trae movimientos de la cuenta.".into());
     }
@@ -541,6 +599,18 @@ Fecha,Descripción,TAE,TIN,"Gross interest","Impuestos retenidos","Other taxes",
 2/1/26,"Interés neto pagado a Cuenta con mejora activada del 2 ene 2026","1.25%","1.25%","1,36€","0,26€","0,00€","0,00€","1,10€",,,
 1/2/26,"Interés neto pagado a Cuenta con mejora activada del 1 feb 2026","1.25%","1.25%","1,36€","0,26€","0,00€","0,00€","1,05€",,,
 ---------,,,,,,,,,,,
+"Materia prima Resúmenes",,,,,,,,,,,
+"Valor del depósito",,,,,,,,,,,
+"Saldo medio del segundo trimestre",€465.70,"Saldo de cierre",€404.39,,,,,,,,
+---------,,,,,,,,,,,
+"Materia prima Estado de transacciones",,,,,,,,,,,
+"Estado de transacciones (solo de las unidades vendidas)",,,,,,,,,,,
+"Fecha (de venta)","Materia prima","Edad de las unidades","Unidades vendidas","Precio unitario (en la fecha de venta)","Valor (de venta)","Ganancias de capital",Comisiones,,,,
+Acquired,,,,,,,,,,,
+"Estado de transacciones (solo de las unidades adquiridas durante el año)",,,,,,,,,,,
+"en la fecha de compra","Descripción y símbolo","Unidades compradas","Precio unitario","Valor de la compra",Comisiones,Comisiones,"Tipo de transacción",,,,
+2026-05-04T09:40:07.226Z,XAU,0.124945,"-€4,001.76",-500€,"0,001249 XAU","4,95€",EXCHANGE,,,,
+---------,,,,,,,,,,,
 "Crypto Estado de transacciones",,,,,,,,,,,
 "Fecha de compra","Descripción y símbolo","Unidades compradas","Precio unitario","Valor de la compra",Comisiones,,,,,,
 "#;
@@ -571,6 +641,12 @@ Fecha,Descripción,TAE,TIN,"Gross interest","Impuestos retenidos","Other taxes",
         assert!(!int[0].interno);
         assert_eq!(int[0].saldo, None);
         assert_eq!(int[1].saldo, Some(40002.04), "saldo de cierre de la hucha en el último");
+
+        let oro = p.oro.expect("oro");
+        assert_eq!(oro.onzas, 0.124945);
+        assert_eq!(oro.coste, 500.0);
+        assert_eq!(oro.valor, Some(404.39));
+        assert_eq!(oro.fecha, "2026-09-22");
     }
 
     /// `LIFE_CSV=ruta cargo test archivo_real -- --ignored --nocapture`
@@ -592,6 +668,7 @@ Fecha,Descripción,TAE,TIN,"Gross interest","Impuestos retenidos","Other taxes",
         println!("saldo cuenta {ultimo_saldo:?} · hucha {hucha:?}");
         let suma: f64 = p.movs.iter().filter(|m| m.producto == "cuenta").map(|m| m.importe).sum();
         println!("suma cuenta {suma:.2}");
+        println!("oro {:?}", p.oro);
     }
 
     #[test]
