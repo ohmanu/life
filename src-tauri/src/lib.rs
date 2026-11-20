@@ -365,7 +365,7 @@ pub fn run() {
             let quit = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&open, &sync]).separator().item(&quit).build()?;
             TrayIconBuilder::with_id("life")
-                .icon(app.default_window_icon().cloned().ok_or("sin icono")?)
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .tooltip("LIFE")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
