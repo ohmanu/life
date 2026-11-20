@@ -35,11 +35,11 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha; falta probar el instalador) · 1 Encargos (Gmail) · 2 Dinero (Revolut: CSV, luego Open Banking) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
+0 Base (hecha) · 1 Encargos (Gmail) · 2 Dinero (Revolut: CSV, luego Open Banking) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
 
-## Pendiente de la fase 0
+## Notas
 
-- Generar y probar el instalador (`npm run app:build`).
+- El instalador (`LIFE_<versión>_x64-setup.exe`, NSIS, por usuario, sin permisos de administrador) no va a Git; se regenera con `npm run app:build`.
 - Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no.
 
 ## Convenciones
