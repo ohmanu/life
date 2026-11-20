@@ -19,8 +19,9 @@ pub const REDIRECT: &str = "https://localhost/life";
 const API: &str = "https://api.enablebanking.com";
 const PAIS: &str = "ES";
 
-/// La clave PEM no cabe en una sola credencial de Windows (máximo 2.560 bytes): va en trozos.
-const TROZO: usize = 1800;
+/// La clave PEM no cabe en una sola credencial de Windows (máximo 2.560 bytes en UTF-16,
+/// es decir, 1.280 caracteres): va en trozos.
+const TROZO: usize = 1000;
 
 pub fn guardar_clave(pem: &str) -> Result<(), String> {
     EncodingKey::from_rsa_pem(pem.as_bytes()).map_err(|_| "Ese archivo no es una clave privada RSA en formato PEM.".to_string())?;
@@ -331,7 +332,8 @@ mod tests {
 
     #[test]
     fn la_clave_va_en_trozos() {
-        // Una PEM de 4096 bits ronda los 3.200 caracteres: más de una credencial.
-        assert!(3200usize.div_ceil(TROZO) >= 2);
+        // Windows guarda cada credencial en UTF-16: 2 bytes por carácter, máximo 2.560 bytes.
+        // Una PEM es ASCII, así que cada trozo ocupa 2 × TROZO bytes.
+        assert!(TROZO * 2 <= 2560);
     }
 }
