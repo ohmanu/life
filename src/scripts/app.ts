@@ -243,6 +243,7 @@ function brief() {
     lines.push(connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
   }
   briefInstagram(lines);
+  briefYouTube(lines);
   briefDinero(lines);
   const ul = $("brief");
   ul.innerHTML = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
@@ -598,6 +599,140 @@ function demoInstagram(): Status<Instagram> {
     snapshot: {
       username: "ejemplo", name: "Ejemplo", followers: 1222, follows: 310, media_count: 214, posts, reach,
       reach_30: 9840, views_30: 31200, engaged_30: 612, interactions_30: 1890, online, historia, synced_at: new Date().toISOString(),
+    },
+  };
+}
+
+/* ---------- youtube ---------- */
+type YtVideo = {
+  id: string; title: string; published: string; duration: string; views: number | null; likes: number | null; comments: number | null;
+  views_28: number | null; minutes_28: number | null; retention_28: number | null;
+};
+type YtDia = { fecha: string; views: number; minutes: number; subs: number };
+type YouTube = {
+  channel: string; subscribers: number | null; total_views: number; video_count: number; videos: YtVideo[]; dias: YtDia[];
+  views_28: number | null; minutes_28: number | null; avg_duration_28: number | null; retention_28: number | null;
+  subs_ganados_28: number | null; subs_perdidos_28: number | null; trafico: [string, number][]; synced_at: string;
+};
+type YtView = { configurado: boolean; connected: boolean; snapshot: YouTube | null };
+let ytState: YtView = { configurado: false, connected: false, snapshot: null };
+
+const setY = (key: string, value: string) => document.querySelectorAll<HTMLElement>(`[data-y="${key}"]`).forEach(n => (n.textContent = value));
+const TRAFICO: Record<string, string> = {
+  YT_SEARCH: "Búsqueda de YouTube", SUGGESTED_VIDEO: "Vídeos sugeridos", BROWSE: "Inicio y suscripciones", EXT_URL: "Webs externas",
+  SHORTS: "Shorts", PLAYLIST: "Listas", NO_LINK_OTHER: "Directo o desconocido", YT_CHANNEL: "Tu canal", NOTIFICATION: "Notificaciones",
+  YT_OTHER_PAGE: "Otras páginas de YouTube", END_SCREEN: "Pantallas finales", SUBSCRIBER: "Suscriptores", RELATED_VIDEO: "Vídeos relacionados",
+};
+const mmss = (s: number) => `${Math.floor(s / 60)}:${pad(Math.round(s % 60))}`;
+
+function ytChart(yt: YouTube | null) {
+  const svg = $("yt-chart") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  if (!yt || !yt.dias.length) { label(svg, 0, 40, yt ? "SIN DATOS DE ANALYTICS TODAVÍA" : "SIN DATOS · CONECTA YOUTUBE EN F5", { fill: K.grid, "font-size": 9 }); return; }
+  const n = yt.dias.length, max = Math.max(1, ...yt.dias.map(d => d.views));
+  const X = (i: number) => 2 + i * (296 / Math.max(1, n - 1)), Y = (v: number) => 60 - v / max * 52;
+  for (let k = 0; k < 3; k++) svgEl("line", { x1: 0, y1: 8 + k * 26, x2: 300, y2: 8 + k * 26, stroke: K.grid, "stroke-width": 1, "stroke-dasharray": "2 4" }, svg);
+  const d = yt.dias.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(p.views).toFixed(1)}`).join("");
+  svgEl("path", { d: d + `L${X(n - 1)} 60L${X(0)} 60Z`, fill: K.ph, "fill-opacity": .12, class: "fade" }, svg);
+  svgEl("path", { d, fill: "none", stroke: K.ph, "stroke-width": 1.5, pathLength: 1, class: "draw glow" }, svg);
+  const ex = X(n - 1), ey = Y(yt.dias[n - 1].views);
+  svgEl("rect", { x: ex - 3, y: ey - 3, width: 6, height: 6, fill: "none", stroke: K.hi, class: "ping" }, svg);
+  svgEl("rect", { x: ex - 3, y: ey - 3, width: 6, height: 6, fill: K.hi, class: "fade" }, svg);
+  label(svg, 0, 69, ddmm(new Date(yt.dias[0].fecha + "T00:00:00")), { "font-size": 8.5 });
+  label(svg, 300, 69, ddmm(new Date(yt.dias[n - 1].fecha + "T00:00:00")), { "font-size": 8.5, "text-anchor": "end" });
+}
+
+function renderYouTube(v: YtView) {
+  ytState = v;
+  const yt = v.snapshot;
+  $("yt-h").textContent = yt ? `YouTube · ${yt.channel}` : "YouTube";
+  const neto = yt && yt.subs_ganados_28 !== null ? yt.subs_ganados_28 - (yt.subs_perdidos_28 ?? 0) : null;
+  setY("subs", yt ? (yt.subscribers === null ? "oculto" : fmt(yt.subscribers)) : "—");
+  setY("subs_d", yt ? (neto !== null ? `${neto >= 0 ? "+" : ""}${fmt(neto)} en 28 d` : `${fmt(yt.video_count)} vídeos`) : v.connected ? "sincronizando…" : "conecta YouTube en F5");
+  setY("views", yt ? num(yt.views_28) : "—");
+  setY("views_d", yt ? `${fmt(yt.total_views)} en total` : "");
+  setY("horas", yt && yt.minutes_28 !== null ? fmt(yt.minutes_28 / 60, yt.minutes_28 < 600 ? 1 : 0) : "—");
+  setY("horas_d", yt && yt.avg_duration_28 !== null ? `${mmss(yt.avg_duration_28)} de media por vista` : "");
+  setY("ret", yt && yt.retention_28 !== null ? `${fmt(yt.retention_28, 0)} %` : "—");
+  setY("ret_d", yt ? "del vídeo, de media" : "");
+  ytChart(yt);
+  const vids = (yt?.videos ?? []).slice().sort((a, b) => (b.views_28 ?? -1) - (a.views_28 ?? -1) || b.published.localeCompare(a.published)).slice(0, 5);
+  $("yt-videos").innerHTML = vids.length
+    ? vids.map(x => `<div class="row"><span><a href="#" data-yt="${esc(x.id)}" title="${esc(x.title)}">${esc(x.title)}</a></span><span>${x.views_28 !== null ? `${fmt(x.views_28)} · 28 d` : `${num(x.views)} vistas`}${x.retention_28 !== null ? ` · ${fmt(x.retention_28, 0)} %` : ""}</span></div>`).join("")
+    : `<div class="row"><span class="muted">${yt ? "Sin vídeos." : "Sin datos"}</span><span></span></div>`;
+  const tot = (yt?.trafico ?? []).reduce((s, t) => s + t[1], 0);
+  $("yt-trafico").innerHTML = yt && tot
+    ? `<div class="row"><span class="muted">DE DÓNDE VIENEN · 28 D</span><span></span></div>` + yt.trafico.slice(0, 4).map(([k, n]) => `<div class="row"><span>${esc(TRAFICO[k] ?? k)}</span><span>${fmt(n / tot * 100)} %</span></div>`).join("")
+    : "";
+  $("yt-sync").textContent = yt ? `SINCRONIZADO ${stamp(yt.synced_at)}` : v.connected ? "SINCRONIZANDO…" : "SIN CONECTAR";
+
+  const src = $("src-youtube");
+  src.className = "src" + (v.connected ? " on" : "");
+  src.lastChild!.textContent = v.connected ? (yt ? `YouTube · ${yt.channel}` : "YouTube") : "YouTube · sin conectar";
+  $("yt-state").textContent = v.connected ? `Conectado${yt ? ` · ${yt.channel}` : ""}` : v.configurado ? "Cliente guardado" : "Sin conectar";
+  $("yt-state").className = "state" + (v.connected ? " on" : "");
+  $("yt-help").hidden = v.configurado;
+  $("yt-form").hidden = v.configurado;
+  $("yt-actions").hidden = !v.configurado;
+  $("yt-connect").textContent = v.connected ? "Volver a autorizar" : "Conectar con YouTube";
+  $("yt-sync-btn").hidden = !v.connected;
+  $("yt-off").textContent = v.connected ? "Desconectar" : "Olvidar cliente";
+  brief();
+}
+
+function briefYouTube(lines: string[]) {
+  const yt = ytState.snapshot;
+  if (!yt) { if (ytState.connected) lines.push("YouTube conectado. Sincronizando…"); return; }
+  const neto = yt.subs_ganados_28 !== null ? yt.subs_ganados_28 - (yt.subs_perdidos_28 ?? 0) : null;
+  lines.push(`YouTube: <b>${yt.subscribers === null ? "suscriptores ocultos" : `${fmt(yt.subscribers)} suscriptores`}</b>${neto ? ` (<span class="hot">${neto > 0 ? "+" : ""}${fmt(neto)}</span> en 28 d)` : ""}`
+    + (yt.views_28 !== null ? ` · <b>${fmt(yt.views_28)}</b> vistas y <b>${fmt((yt.minutes_28 ?? 0) / 60)}</b> h vistas en 28 días.` : "."));
+}
+
+$("yt-videos").addEventListener("click", async e => {
+  const a = (e.target as HTMLElement).closest<HTMLElement>("[data-yt]");
+  if (!a) return;
+  e.preventDefault();
+  if (TAURI) try { await invoke("youtube_abrir", { id: a.dataset.yt }); } catch { /* no se abre */ }
+});
+
+const ytMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("yt-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+async function ytAccion(btn: HTMLButtonElement, aviso: string, fn: () => Promise<YtView>, ok: (v: YtView) => string) {
+  if (!TAURI) { ytMsg("En modo demo no se conecta nada: abre LIFE como app.", "err"); return; }
+  btn.disabled = true; ytMsg(aviso);
+  try { const v = await fn(); renderYouTube(v); ytMsg(ok(v), "ok"); }
+  catch (err) { ytMsg(String(err), "err"); }
+  finally { btn.disabled = false; }
+}
+$("yt-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const id = $<HTMLInputElement>("yt-id"), secret = $<HTMLInputElement>("yt-secret");
+  ytAccion($<HTMLButtonElement>("yt-save"), "Guardando…", () => invoke<YtView>("youtube_configurar", { clientId: id.value, secret: secret.value }),
+    () => { id.value = ""; secret.value = ""; return "Cliente guardado en las credenciales de Windows. Ahora pulsa Conectar con YouTube."; });
+});
+$("yt-connect").addEventListener("click", () =>
+  ytAccion($<HTMLButtonElement>("yt-connect"), "Da permiso en el navegador que se ha abierto (Google avisará de que la app no está verificada: es la tuya)…",
+    () => invoke<YtView>("youtube_conectar"), v => `Conectado${v.snapshot ? ` · ${v.snapshot.channel}` : ""}.`));
+$("yt-sync-btn").addEventListener("click", () =>
+  ytAccion($<HTMLButtonElement>("yt-sync-btn"), "Leyendo YouTube…", () => invoke<YtView>("youtube_sync"), () => "Sincronizado."));
+$("yt-off").addEventListener("click", () => {
+  const todo = !ytState.connected;
+  ytAccion($<HTMLButtonElement>("yt-off"), "", () => invoke<YtView>("youtube_disconnect", { todo }),
+    () => todo ? "ID y secreto del cliente borrados." : "Permiso quitado de LIFE. Para revocarlo también en Google: myaccount.google.com/permissions.");
+});
+
+function demoYouTube(): YtView {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const dia = (i: number) => { const d = new Date(Date.now() - i * DIA); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const dias = Array.from({ length: 28 }, (_, i) => ({ fecha: dia(28 - i), views: Math.round(40 + rnd() * 80 + (i > 20 ? 90 : 0)), minutes: Math.round(100 + rnd() * 200), subs: Math.round(rnd() * 3) }));
+  const titulos = ["Cómo ilumino un retrato con una ventana", "Boda en Sintra · película", "Mi equipo de foto en 2026", "Editar en Lightroom en 10 minutos", "Producto con luz continua"];
+  const videos = titulos.map((t, i) => ({ id: `demo${i}`, title: t, published: new Date(Date.now() - (i * 20 + 3) * DIA).toISOString(), duration: "PT8M", views: Math.round(300 + rnd() * 3000), likes: 20, comments: 4, views_28: Math.round(30 + rnd() * 900), minutes_28: 400, retention_28: 30 + rnd() * 30 }));
+  return {
+    configurado: true, connected: true,
+    snapshot: {
+      channel: "Ejemplo", subscribers: 1204, total_views: 98400, video_count: 37, videos, dias, views_28: 3120, minutes_28: 9050,
+      avg_duration_28: 174, retention_28: 41.5, subs_ganados_28: 38, subs_perdidos_28: 7,
+      trafico: [["YT_SEARCH", 1300], ["SUGGESTED_VIDEO", 900], ["BROWSE", 500], ["EXT_URL", 420]], synced_at: new Date().toISOString(),
     },
   };
 }
@@ -1306,7 +1441,9 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); render(demo()); return; }
+  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); renderYouTube(demoYouTube()); render(demo()); return; }
+  try { renderYouTube(await invoke<YtView>("youtube_status")); }
+  catch (e) { ytMsg(String(e), "err"); }
   try { renderInstagram(await invoke<Status<Instagram>>("instagram_status")); }
   catch (e) { igMsg(String(e), "err"); }
   try { renderDinero(await invoke<Dinero>("dinero_status")); }
@@ -1383,6 +1520,7 @@ if (TAURI) {
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
   listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
   listen<Dinero>("dinero-updated", e => renderDinero(e.payload));
+  listen<YtView>("youtube-updated", e => renderYouTube(e.payload));
   listen<Instagram>("instagram-updated", e => renderInstagram({ connected: true, snapshot: e.payload }));
   // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
   setInterval(() => renderGmail(gmState), 5 * 60 * 1000);

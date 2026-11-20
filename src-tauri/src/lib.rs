@@ -5,6 +5,7 @@ mod gmail;
 mod instagram;
 mod revolut;
 mod secrets;
+mod youtube;
 
 use db::Db;
 use serde::Serialize;
@@ -231,6 +232,130 @@ fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let _ = conn.execute("DELETE FROM ajustes WHERE clave = 'ig_renovado'", []);
     db::delete_snapshot(&conn, "instagram").map_err(|e| e.to_string())
+}
+
+// ── YouTube ───────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct YtView {
+    /// Hay ID y secreto del cliente OAuth guardados.
+    configurado: bool,
+    connected: bool,
+    snapshot: Option<youtube::Snapshot>,
+}
+
+fn yt_view(app: &AppHandle) -> Result<YtView, String> {
+    let configurado = secrets::get(youtube::CLIENT_ID)?.is_some() && secrets::get(youtube::CLIENT_SECRET)?.is_some();
+    let connected = secrets::get(youtube::REFRESH)?.is_some();
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let snapshot = db::snapshot(&conn, "youtube").map_err(|e| e.to_string())?.and_then(|j| serde_json::from_str(&j).ok());
+    Ok(YtView { configurado, connected, snapshot })
+}
+
+fn yt_cliente() -> Result<(String, String), String> {
+    Ok((
+        secrets::get(youtube::CLIENT_ID)?.ok_or("Falta el ID de cliente de Google.")?,
+        secrets::get(youtube::CLIENT_SECRET)?.ok_or("Falta el secreto de cliente de Google.")?,
+    ))
+}
+
+async fn sync_youtube(app: &AppHandle) -> Result<YtView, String> {
+    let (id, secret) = yt_cliente()?;
+    let refresh = secrets::get(youtube::REFRESH)?.ok_or("YouTube no está conectado.")?;
+    let result = youtube::fetch(&id, &secret, &refresh).await;
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        match &result {
+            Ok(snap) => {
+                let json = serde_json::to_string(snap).map_err(|e| e.to_string())?;
+                db::save_snapshot(&conn, "youtube", &json, &snap.synced_at).map_err(|e| e.to_string())?;
+                if let Some(s) = snap.subscribers {
+                    let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    let _ = conn.execute(
+                        "INSERT INTO metricas_diarias (fuente, clave, fecha, valor) VALUES ('youtube', 'suscriptores', ?1, ?2)
+                         ON CONFLICT(fuente, clave, fecha) DO UPDATE SET valor = excluded.valor",
+                        rusqlite::params![hoy, s],
+                    );
+                }
+                db::log_sync(&conn, "youtube", true, None);
+            }
+            Err(e) => db::log_sync(&conn, "youtube", false, Some(e)),
+        }
+    }
+    result?;
+    let view = yt_view(app)?;
+    let _ = app.emit("youtube-updated", &view);
+    Ok(view)
+}
+
+#[tauri::command]
+fn youtube_status(app: AppHandle) -> Result<YtView, String> {
+    yt_view(&app)
+}
+
+/// Guarda el ID y el secreto del cliente OAuth (tipo «App de escritorio») de Google Cloud.
+#[tauri::command]
+fn youtube_configurar(app: AppHandle, client_id: String, secret: String) -> Result<YtView, String> {
+    let id = client_id.trim();
+    let secret = secret.trim();
+    if !id.ends_with(".apps.googleusercontent.com") {
+        return Err("El ID de cliente termina en «.apps.googleusercontent.com».".into());
+    }
+    if secret.len() < 10 {
+        return Err("Pega también el secreto del cliente.".into());
+    }
+    secrets::set(youtube::CLIENT_ID, id)?;
+    secrets::set(youtube::CLIENT_SECRET, secret)?;
+    yt_view(&app)
+}
+
+/// Abre el permiso de Google en el navegador y espera la vuelta en un puerto local.
+#[tauri::command]
+async fn youtube_conectar(app: AppHandle) -> Result<YtView, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let (id, secret) = yt_cliente()?;
+    let auth = youtube::preparar(&id)?;
+    app.opener().open_url(auth.url.clone(), None::<&str>).map_err(|e| e.to_string())?;
+    let (code, redirect, verifier) = tauri::async_runtime::spawn_blocking(move || youtube::esperar(auth))
+        .await
+        .map_err(|e| e.to_string())??;
+    show_main(&app);
+    let refresh = youtube::canjear(&id, &secret, &code, &redirect, &verifier).await?;
+    secrets::set(youtube::REFRESH, &refresh)?;
+    sync_youtube(&app).await
+}
+
+#[tauri::command]
+async fn youtube_sync(app: AppHandle) -> Result<YtView, String> {
+    sync_youtube(&app).await
+}
+
+/// Quita el permiso en LIFE. Con `todo`, también el ID y el secreto del cliente.
+#[tauri::command]
+fn youtube_disconnect(app: AppHandle, todo: bool) -> Result<YtView, String> {
+    secrets::delete(youtube::REFRESH)?;
+    if todo {
+        secrets::delete(youtube::CLIENT_ID)?;
+        secrets::delete(youtube::CLIENT_SECRET)?;
+    }
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::delete_snapshot(&conn, "youtube").map_err(|e| e.to_string())?;
+    }
+    yt_view(&app)
+}
+
+/// Abre un vídeo propio en el navegador.
+#[tauri::command]
+fn youtube_abrir(app: AppHandle, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("Vídeo no válido.".into());
+    }
+    app.opener().open_url(format!("https://www.youtube.com/watch?v={id}"), None::<&str>).map_err(|e| e.to_string())
 }
 
 // ── Gmail · encargos ──────────────────────────────────────────────────────
@@ -950,6 +1075,11 @@ async fn sync_all(app: &AppHandle, github_too: bool) {
             log::warn!("gmail: {e}");
         }
     }
+    if github_too && matches!(secrets::get(youtube::REFRESH), Ok(Some(_))) {
+        if let Err(e) = sync_youtube(app).await {
+            log::warn!("youtube: {e}");
+        }
+    }
     if github_too && matches!(secrets::get(instagram::TOKEN), Ok(Some(_))) {
         if let Err(e) = sync_instagram(app).await {
             log::warn!("instagram: {e}");
@@ -1062,7 +1192,13 @@ pub fn run() {
             instagram_connect,
             instagram_sync,
             instagram_disconnect,
-            instagram_abrir
+            instagram_abrir,
+            youtube_status,
+            youtube_configurar,
+            youtube_conectar,
+            youtube_sync,
+            youtube_disconnect,
+            youtube_abrir
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");

@@ -40,7 +40,7 @@ const tabs = [
           <span class="src" id="src-gmail"><i></i>Gmail</span>
           <span class="src" id="src-revolut"><i></i>Revolut</span>
           <span class="src" id="src-instagram"><i></i>Instagram</span>
-          <span class="src"><i></i>YouTube · fase 3</span>
+          <span class="src" id="src-youtube"><i></i>YouTube</span>
         </span>
         <button class="btn" id="privacy" type="button" aria-pressed="false" title="Tecla P">Ocultar cifras</button>
       </div>
@@ -198,10 +198,18 @@ const tabs = [
               <div class="posts" id="ig-posts"></div>
               <div class="foot"><span>ESTADÍSTICAS DE LAS 24 MÁS RECIENTES · META LAS DA CON HASTA 48 H DE RETRASO</span><span id="ig-posts-n"></span></div>
             </div>
-            <div class="cell c-4 pending">
-              <span class="tag">FASE 3</span>
-              <h2>YouTube</h2>
-              <p>Suscriptores, horas vistas y retención.</p>
+            <div class="cell c-4">
+              <div class="cell-h"><h3 id="yt-h">YouTube</h3><span class="jp">動画</span></div>
+              <div class="kpis two">
+                <div class="kpi"><div class="k">Suscriptores</div><div class="v" data-y="subs">—</div><div class="d" data-y="subs_d"></div></div>
+                <div class="kpi"><div class="k">Vistas · 28 d</div><div class="v" data-y="views">—</div><div class="d" data-y="views_d"></div></div>
+                <div class="kpi"><div class="k">Horas vistas · 28 d</div><div class="v" data-y="horas">—</div><div class="d" data-y="horas_d"></div></div>
+                <div class="kpi"><div class="k">Retención media</div><div class="v" data-y="ret">—</div><div class="d" data-y="ret_d"></div></div>
+              </div>
+              <svg class="heat-svg" id="yt-chart" viewBox="0 0 300 70" role="img" aria-label="Vistas diarias de YouTube en los últimos 28 días"></svg>
+              <div class="rows" id="yt-videos"></div>
+              <div class="rows yt-traf" id="yt-trafico"></div>
+              <div class="foot"><span id="yt-sync">SIN CONECTAR</span><span>CADA HORA</span></div>
             </div>
           </div>
         </section>
@@ -301,7 +309,31 @@ const tabs = [
                   <button class="btn danger" type="button" id="ig-off" hidden>Desconectar</button>
                 </div>
               </div>
-              <div class="conn"><div><h4>YouTube</h4><div class="state">Fase 3</div></div><p>Suscriptores, horas vistas y retención.</p><div></div></div>
+              <div class="conn">
+                <div><h4>YouTube</h4><div class="state" id="yt-state">Sin conectar</div></div>
+                <div>
+                  <div id="yt-help">
+                    <p>APIs oficiales de Google, solo lectura (canal, vídeos y estadísticas). Una vez, en <span class="copy">console.cloud.google.com</span>:</p>
+                    <ol class="steps">
+                      <li>Crea un proyecto <span class="copy">LIFE</span> y en <b>APIs y servicios → Biblioteca</b> habilita <b>YouTube Data API v3</b> y <b>YouTube Analytics API</b>.</li>
+                      <li>En <b>Google Auth Platform</b> (pantalla de consentimiento): público <b>Externo</b>, nombre <span class="copy">LIFE</span> y tu correo. En <b>Público</b>, pulsa <b>Publicar app</b> para que el permiso no caduque a los 7 días (Google avisará de que no está verificada: es tuya).</li>
+                      <li>En <b>Clientes</b> → <b>Crear cliente</b> → tipo <b>App de escritorio</b>. Copia el ID y el secreto y pégalos aquí.</li>
+                    </ol>
+                  </div>
+                  <form class="field" id="yt-form" autocomplete="off">
+                    <input id="yt-id" type="text" placeholder="ID de cliente · ….apps.googleusercontent.com" aria-label="ID de cliente de Google" spellcheck="false" />
+                    <input id="yt-secret" type="password" placeholder="Secreto de cliente" aria-label="Secreto de cliente de Google" spellcheck="false" />
+                    <button class="btn solid" type="submit" id="yt-save">Guardar</button>
+                  </form>
+                  <div class="field" id="yt-actions" hidden>
+                    <button class="btn solid" type="button" id="yt-connect">Conectar con YouTube</button>
+                    <button class="btn" type="button" id="yt-sync-btn" hidden>Sincronizar</button>
+                    <button class="btn danger" type="button" id="yt-off">Desconectar</button>
+                  </div>
+                  <div class="msg" id="yt-msg" role="status"></div>
+                </div>
+                <div></div>
+              </div>
             </div>
             <div class="cell c-4">
               <div class="cell-h"><h3>Sistema</h3><span class="jp">システム</span></div>
