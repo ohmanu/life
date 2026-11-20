@@ -22,12 +22,18 @@ tauri = { version = "2.12.7", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
 # Sin "bundled": enlaza con SQLite3 Multiple Ciphers, que compila build.rs.
 rusqlite = "0.37"
 getrandom = "0.3"
+# Gmail por IMAP (TLS del sistema, sin OpenSSL) y lectura de correos MIME.
+imap = "2.4"
+native-tls = "0.2"
+mail-parser = "0.11"
 keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["time"] }

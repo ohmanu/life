@@ -3,6 +3,8 @@
 //! en el Administrador de credenciales de Windows. Nada sale del ordenador.
 
 use rusqlite::{Connection, OptionalExtension, params};
+use crate::gmail::{Encargo, Pendiente};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -55,6 +57,16 @@ const MIGRATIONS: &[&str] = &[
         categoria TEXT,
         cuenta    TEXT
     );
+    ",
+    // 2 · encargos desde Gmail
+    "
+    ALTER TABLE encargos ADD COLUMN uid INTEGER;
+    ALTER TABLE encargos ADD COLUMN asunto TEXT;
+    ALTER TABLE encargos ADD COLUMN telefono TEXT;
+    ALTER TABLE encargos ADD COLUMN empresa TEXT;
+    ALTER TABLE encargos ADD COLUMN web TEXT;
+    ALTER TABLE encargos ADD COLUMN cambiado TEXT;
+    CREATE INDEX encargos_recibido ON encargos (recibido);
     ",
 ];
 
@@ -162,6 +174,88 @@ pub fn snapshot(conn: &Connection, fuente: &str) -> rusqlite::Result<Option<Stri
 pub fn delete_snapshot(conn: &Connection, fuente: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM instantaneas WHERE fuente = ?1", [fuente])?;
     Ok(())
+}
+
+pub fn ajuste(conn: &Connection, clave: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT valor FROM ajustes WHERE clave = ?1", [clave], |r| r.get(0)).optional()
+}
+
+pub fn set_ajuste(conn: &Connection, clave: &str, valor: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO ajustes (clave, valor) VALUES (?1, ?2)
+         ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
+        params![clave, valor],
+    )?;
+    Ok(())
+}
+
+// ── Encargos ──────────────────────────────────────────────────────────────
+
+/// Guarda un encargo leído de Gmail. Si ya existía, solo actualiza el UID: el estado que
+/// marcaste a mano no se pisa.
+pub fn insert_encargo(conn: &Connection, e: &Encargo) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "INSERT INTO encargos (id, uid, recibido, asunto, tipo, que, nombre, correo, telefono, empresa,
+                               fecha, lugar, web, presupuesto, idioma, mensaje, estado)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'nuevo')
+         ON CONFLICT(id) DO NOTHING",
+        params![e.id, e.uid, e.recibido, e.asunto, e.tipo, e.que, e.nombre, e.correo, e.telefono,
+                e.empresa, e.fecha, e.lugar, e.web, e.presupuesto, e.idioma, e.mensaje],
+    )?;
+    if n == 0 {
+        conn.execute("UPDATE encargos SET uid = ?2 WHERE id = ?1", params![e.id, e.uid])?;
+    }
+    Ok(n > 0)
+}
+
+pub fn encargos(conn: &Connection) -> rusqlite::Result<Vec<Encargo>> {
+    let mut st = conn.prepare(
+        "SELECT id, COALESCE(uid, 0), recibido, COALESCE(asunto, ''), COALESCE(tipo, ''), COALESCE(que, ''),
+                COALESCE(nombre, ''), COALESCE(correo, ''), COALESCE(telefono, ''), COALESCE(empresa, ''),
+                COALESCE(fecha, ''), COALESCE(lugar, ''), COALESCE(web, ''), COALESCE(presupuesto, ''),
+                COALESCE(idioma, ''), COALESCE(mensaje, ''), estado, respondido
+         FROM encargos ORDER BY recibido DESC",
+    )?;
+    let rows = st.query_map([], |r| {
+        Ok(Encargo {
+            id: r.get(0)?, uid: r.get(1)?, recibido: r.get(2)?, asunto: r.get(3)?, tipo: r.get(4)?,
+            que: r.get(5)?, nombre: r.get(6)?, correo: r.get(7)?, telefono: r.get(8)?, empresa: r.get(9)?,
+            fecha: r.get(10)?, lugar: r.get(11)?, web: r.get(12)?, presupuesto: r.get(13)?,
+            idioma: r.get(14)?, mensaje: r.get(15)?, estado: r.get(16)?, respondido: r.get(17)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn known_uids(conn: &Connection) -> rusqlite::Result<HashSet<u32>> {
+    let mut st = conn.prepare("SELECT uid FROM encargos WHERE uid IS NOT NULL")?;
+    let rows = st.query_map([], |r| r.get::<_, u32>(0))?;
+    rows.collect()
+}
+
+/// Encargos sin respuesta de los últimos 180 días (los descartados no cuentan).
+pub fn pendientes(conn: &Connection, desde: &str) -> rusqlite::Result<Vec<Pendiente>> {
+    let mut st = conn.prepare(
+        "SELECT id, COALESCE(correo, ''), recibido FROM encargos
+         WHERE respondido IS NULL AND estado != 'descartado' AND recibido >= ?1",
+    )?;
+    let rows = st.query_map([desde], |r| Ok(Pendiente { id: r.get(0)?, correo: r.get(1)?, recibido: r.get(2)? }))?;
+    rows.collect()
+}
+
+/// Tu primera respuesta: guarda la fecha y, si seguía como «nuevo», lo pasa a «respondido».
+pub fn set_respondido(conn: &Connection, id: &str, cuando: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE encargos SET respondido = ?2,
+                estado = CASE WHEN estado = 'nuevo' THEN 'respondido' ELSE estado END
+         WHERE id = ?1 AND respondido IS NULL",
+        params![id, cuando],
+    )?;
+    Ok(())
+}
+
+pub fn set_estado(conn: &Connection, id: &str, estado: &str, cuando: &str) -> rusqlite::Result<usize> {
+    conn.execute("UPDATE encargos SET estado = ?2, cambiado = ?3 WHERE id = ?1", params![id, estado, cuando])
 }
 
 pub fn log_sync(conn: &Connection, fuente: &str, ok: bool, detalle: Option<&str>) {

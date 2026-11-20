@@ -207,6 +207,43 @@ button { font: inherit; }
 .switch input:checked { border-color: var(--ph); }
 .switch input:checked::after { left: 20px; background: var(--ph); box-shadow: var(--glow); }
 
+/* alarmas */
+.kpis.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .kpis.five { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.kpi .v.alarm { color: var(--alert); text-shadow: none; animation: pulse 1.6s ease-in-out infinite; }
+.brief .alarm { color: var(--alert); }
+
+/* encargos · tablero */
+.board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s3); align-items: start; }
+@media (max-width: 1100px) { .board { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.col-h { display: flex; justify-content: space-between; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ph); border-bottom: 1px solid var(--grid); padding-bottom: 4px; margin-bottom: var(--s2); }
+.col-h b { color: var(--hi); font-weight: 500; }
+.col-list { display: grid; gap: 6px; }
+.col-empty { font-size: 11px; color: var(--grid); padding: 6px 0; }
+.card {
+  font: inherit; text-align: left; width: 100%; display: grid; gap: 2px; padding: 7px 9px; cursor: pointer;
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--grid);
+  animation: rise .35s both; animation-delay: calc(var(--i, 0) * 40ms);
+}
+.card:hover, .card[aria-pressed="true"] { border-color: var(--ph); box-shadow: var(--glow); }
+.card .t { color: var(--hi); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .n { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .m { display: flex; justify-content: space-between; gap: var(--s2); font-size: 10.5px; color: var(--grid); }
+.card.late { border-color: var(--alert); }
+.card.late .age { color: var(--alert); animation: blink 1s steps(1) infinite; }
+.board-empty { grid-column: 1 / -1; padding: var(--s4) 0; color: var(--grid); }
+.board-empty b { color: var(--ph); }
+
+/* encargos · ficha */
+.ficha { display: grid; gap: var(--s3); }
+.ficha .head { display: flex; justify-content: space-between; gap: var(--s3); align-items: baseline; flex-wrap: wrap; }
+.ficha .head h4 { margin: 0; font: 600 16px var(--f); color: var(--ph); text-shadow: var(--glow); }
+.ficha .row span:last-child { user-select: text; text-align: right; }
+.ficha .mensaje { white-space: pre-wrap; border: 1px dashed var(--grid); padding: var(--s3); max-height: 220px; overflow: auto; user-select: text; line-height: 1.55; }
+.estados { display: flex; flex-wrap: wrap; gap: 4px; }
+.estados .btn { padding: 3px 8px; font-size: 11px; }
+.ficha .late { color: var(--alert); }
+
 .demo-banner { background: var(--alert); color: var(--bg); text-align: center; font-size: 11px; letter-spacing: .14em; padding: 3px; }
 
 .heat-svg, .spark-svg { width: 100%; height: auto; display: block; }

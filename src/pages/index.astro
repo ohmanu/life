@@ -37,7 +37,7 @@ const tabs = [
         <span class="clock"><span class="signal" aria-hidden="true"><b></b><b></b><b></b><b></b></span><span id="clock">—</span></span>
         <span class="sources">
           <span class="src" id="src-github"><i></i>GitHub</span>
-          <span class="src"><i></i>Gmail · fase 1</span>
+          <span class="src" id="src-gmail"><i></i>Gmail</span>
           <span class="src"><i></i>Revolut · fase 2</span>
           <span class="src"><i></i>Instagram · fase 3</span>
           <span class="src"><i></i>YouTube · fase 3</span>
@@ -69,10 +69,10 @@ const tabs = [
             </div>
             <div class="cell c-12">
               <div class="kpis">
+                <div class="kpi"><div class="k">Encargos sin responder</div><div class="v" data-e="sin">—</div><div class="d" data-e="sin_d"></div></div>
+                <div class="kpi"><div class="k">Encargos abiertos</div><div class="v" data-e="abiertos">—</div><div class="d" data-e="abiertos_d"></div></div>
                 <div class="kpi"><div class="k">Racha GitHub</div><div class="v" data-k="streak">—</div><div class="d" data-k="longest"></div></div>
                 <div class="kpi"><div class="k">Contribuciones · 90 d</div><div class="v" data-k="last_90">—</div><div class="d" data-k="total_year"></div></div>
-                <div class="kpi"><div class="k">PRs abiertos</div><div class="v" data-k="open_prs">—</div><div class="d">tuyos, en cualquier repo</div></div>
-                <div class="kpi"><div class="k">Issues abiertos</div><div class="v" data-k="open_issues">—</div><div class="d">creados por ti</div></div>
               </div>
             </div>
             <div class="cell c-12">
@@ -85,16 +85,31 @@ const tabs = [
 
         <!-- ENCARGOS -->
         <section class="view" id="v-encargos" role="tabpanel" aria-labelledby="tab-encargos" hidden>
-          <div class="grid"><div class="cell c-12 pending">
-            <span class="tag">FASE 1 · GMAIL · SOLO LECTURA</span>
-            <h2>Encargos de glutamatocult.com</h2>
-            <p>LIFE leerá los correos de la hoja de encargo (de web@glutamatocult.com, asunto «Encargo · …») y los convertirá en fichas.</p>
-            <ul>
-              <li>Tablero Nuevo → Respondido → Presupuesto → Confirmado → Cobrado</li>
-              <li>«Respondido» cuando el hilo tenga un correo tuyo</li>
-              <li>Aviso de Windows si un encargo pasa de 48 h sin respuesta</li>
-            </ul>
-          </div></div>
+          <div class="grid">
+            <div class="cell c-12">
+              <div class="kpis five">
+                <div class="kpi"><div class="k">Sin responder</div><div class="v" data-e="sin">—</div><div class="d" data-e="sin_d"></div></div>
+                <div class="kpi"><div class="k">Abiertos</div><div class="v" data-e="abiertos">—</div><div class="d" data-e="abiertos_d"></div></div>
+                <div class="kpi"><div class="k">Este mes</div><div class="v" data-e="mes">—</div><div class="d" data-e="mes_d"></div></div>
+                <div class="kpi"><div class="k">Respuesta media</div><div class="v" data-e="resp">—</div><div class="d">últimos 90 días</div></div>
+                <div class="kpi"><div class="k">Cobrados</div><div class="v" data-e="cobrados">—</div><div class="d" data-e="cobrados_d"></div></div>
+              </div>
+            </div>
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Tablero de encargos</h3><span class="jp">依頼ボード</span></div>
+              <div class="board" id="board"></div>
+              <div class="foot"><span id="enc-sync">SIN SINCRONIZAR</span><span id="enc-foot">GMAIL · SOLO LECTURA · CADA 10 MIN</span></div>
+            </div>
+            <div class="cell c-7">
+              <div class="cell-h"><h3>Hoja de encargo</h3><span class="jp">依頼票</span></div>
+              <div id="ficha" class="ficha"></div>
+            </div>
+            <div class="cell c-5">
+              <div class="cell-h"><h3>Encargos por mes</h3><span class="jp">月別</span></div>
+              <svg class="heat-svg" id="enc-chart" viewBox="0 0 360 170" role="img" aria-label="Encargos recibidos por mes en el último año"></svg>
+              <div class="foot"><span>12 MESES</span><span id="enc-chart-tot"></span></div>
+            </div>
+          </div>
         </section>
 
         <!-- DINERO -->
@@ -154,7 +169,24 @@ const tabs = [
                   <button class="btn danger" type="button" id="gh-off" hidden>Desconectar</button>
                 </div>
               </div>
-              <div class="conn"><div><h4>Gmail</h4><div class="state">Fase 1</div></div><p>Solo lectura de los correos de encargo.</p><div></div></div>
+              <div class="conn">
+                <div><h4>Gmail</h4><div class="state" id="gm-state">Sin conectar</div></div>
+                <div>
+                  <p id="gm-help">Lee solo los correos de <span class="copy">web@glutamatocult.com</span>. Activa la verificación en dos pasos de Google, crea una contraseña de aplicación en
+                    <span class="copy">myaccount.google.com/apppasswords</span> (nombre: LIFE) y pégala aquí con tu dirección.
+                    Se guarda en el Administrador de credenciales de Windows. LIFE abre el buzón en modo examinar: nunca marca, mueve, borra ni envía nada.</p>
+                  <form class="field" id="gm-form" autocomplete="off">
+                    <input id="gm-user" type="email" placeholder="tu@gmail.com" aria-label="Dirección de Gmail" spellcheck="false" />
+                    <input id="gm-pass" type="password" placeholder="contraseña de aplicación · 16 letras" aria-label="Contraseña de aplicación de Google" spellcheck="false" />
+                    <button class="btn solid" type="submit" id="gm-connect">Conectar</button>
+                  </form>
+                  <div class="msg" id="gm-msg" role="status"></div>
+                </div>
+                <div class="actions">
+                  <button class="btn" type="button" id="gm-sync" hidden>Sincronizar</button>
+                  <button class="btn danger" type="button" id="gm-off" hidden>Desconectar</button>
+                </div>
+              </div>
               <div class="conn"><div><h4>Revolut</h4><div class="state">Fase 2</div></div><p>CSV primero, Open Banking después.</p><div></div></div>
               <div class="conn"><div><h4>Instagram · YouTube</h4><div class="state">Fase 3</div></div><p>Métricas de cuenta y de publicaciones.</p><div></div></div>
             </div>
@@ -163,7 +195,8 @@ const tabs = [
               <div class="rows">
                 <label class="row switch" for="autostart"><span>Abrir LIFE al iniciar Windows</span><input type="checkbox" id="autostart" /></label>
                 <div class="row"><span>Al cerrar la ventana</span><span>se queda en la bandeja</span></div>
-                <div class="row"><span>Datos</span><span>life.db en tu equipo</span></div>
+                <div class="row"><span>Datos</span><span>life.db cifrada en tu equipo</span></div>
+                <div class="row"><span>Avisos</span><span>encargo nuevo · 48 h sin respuesta</span></div>
                 <div class="row"><span>Claves</span><span>Credenciales de Windows</span></div>
                 <div class="row"><span>Ocultar cifras</span><span>tecla P</span></div>
               </div>

@@ -10,6 +10,19 @@ type GitHub = {
   days: Day[]; repos: Repo[]; open_prs: number; open_issues: number; synced_at: string;
 };
 type Status<T> = { connected: boolean; snapshot: T | null };
+type Encargo = {
+  id: string; uid: number; recibido: string; asunto: string; tipo: string; que: string; nombre: string; correo: string;
+  telefono: string; empresa: string; fecha: string; lugar: string; web: string; presupuesto: string; idioma: string;
+  mensaje: string; estado: string; respondido: string | null;
+};
+type Gmail = { connected: boolean; user: string | null; synced_at: string | null; encargos: Encargo[] };
+
+const ESTADOS = ["nuevo", "respondido", "presupuesto", "confirmado", "cobrado", "descartado"] as const;
+const COLUMNAS = ["nuevo", "respondido", "presupuesto", "confirmado", "cobrado"];
+const NOMBRE_ESTADO: Record<string, string> = {
+  nuevo: "Nuevo", respondido: "Respondido", presupuesto: "Presupuesto", confirmado: "Confirmado", cobrado: "Cobrado", descartado: "Descartado",
+};
+const LIMITE_H = 48;
 
 const TAURI = "__TAURI_INTERNALS__" in window;
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -31,6 +44,13 @@ const daysAgo = (iso: string) => {
   return Math.round((b.getTime() - a.getTime()) / 86400000);
 };
 const rel = (iso: string) => { const d = daysAgo(iso); return d <= 0 ? "hoy" : d === 1 ? "ayer" : `hace ${d} d`; };
+/** Texto que viene de correos ajenos: siempre escapado antes de meterlo en el HTML. */
+const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const hoursSince = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3600000;
+const sinResponder = (e: Encargo) => e.estado === "nuevo" && !e.respondido;
+const tarde = (e: Encargo) => sinResponder(e) && hoursSince(e.recibido) > LIMITE_H;
+const abierto = (e: Encargo) => e.estado !== "cobrado" && e.estado !== "descartado";
+const espera = (iso: string) => { const h = hoursSince(iso); return h < 1 ? "ahora" : h < 72 ? `${Math.floor(h)} h` : `${Math.floor(h / 24)} d`; };
 const stamp = (iso: string) => { const d = new Date(iso); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
 function svgEl(tag: string, attrs: Record<string, string | number>, parent?: Element) {
@@ -181,8 +201,35 @@ function heat(days: Day[]) {
   svgEl("rect", { x: x0 + Math.floor(n / 7) * (s + g) - 1.5, y: y0 + (n % 7) * (s + g) - 1.5, width: s + 3, height: s + 3, fill: "none", stroke: K.hi, "stroke-width": 1.5, class: "blink" }, svg);
 }
 
-function brief(gh: GitHub | null, connected: boolean) {
+let ghState: Status<GitHub> = { connected: false, snapshot: null };
+let gmState: Gmail = { connected: false, user: null, synced_at: null, encargos: [] };
+let selected: string | null = null;
+
+function briefEncargos(lines: string[]) {
+  const g = gmState;
+  if (!g.connected && !g.encargos.length) {
+    lines.push(`Gmail sin conectar. Ve a <b>F5 · Conexiones</b> para leer los encargos de la web.`);
+    return;
+  }
+  const sin = g.encargos.filter(sinResponder).sort((a, b) => a.recibido.localeCompare(b.recibido));
+  if (sin.length) {
+    const viejo = sin[0];
+    const late = tarde(viejo);
+    lines.push(`<span class="${late ? "alarm" : "hot"}">${sin.length} encargo${sin.length === 1 ? "" : "s"} sin responder</span>. `
+      + `<b>${esc(viejo.que || viejo.tipo)} · ${esc(viejo.nombre)}</b> lleva <span class="${late ? "alarm" : "hot"}">${espera(viejo.recibido)}</span> esperando.`);
+  } else {
+    lines.push(g.encargos.length ? "Todos los encargos tienen respuesta." : "Aún no ha llegado ningún encargo por la web.");
+  }
+  const now = new Date();
+  const mes = g.encargos.filter(e => { const d = new Date(e.recibido); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); });
+  const abiertos = g.encargos.filter(abierto).length;
+  if (g.encargos.length) lines.push(`<b>${mes.length}</b> encargo${mes.length === 1 ? "" : "s"} este mes · <b>${abiertos}</b> abierto${abiertos === 1 ? "" : "s"} en el tablero.`);
+}
+
+function brief() {
+  const gh = ghState.snapshot, connected = ghState.connected;
   const lines: string[] = [];
+  briefEncargos(lines);
   if (gh) {
     const last = gh.repos[0];
     lines.push(`Racha en GitHub: <b>${gh.streak} ${gh.streak === 1 ? "día" : "días"}</b>.${last ? ` Último push en <b>${last.name}</b> ${rel(last.pushed_at)}.` : ""}`);
@@ -195,14 +242,15 @@ function brief(gh: GitHub | null, connected: boolean) {
   } else {
     lines.push(connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
   }
-  lines.push(`<span class="off">Encargos: se conectan en la fase 1 (Gmail).</span>`);
   lines.push(`<span class="off">Dinero: fase 2 (Revolut).</span>`);
   const ul = $("brief");
   ul.innerHTML = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
-  $("brief-time").textContent = gh ? `ACTUALIZADO ${stamp(gh.synced_at)}` : "";
+  const last = [gh?.synced_at, gmState.synced_at].filter(Boolean).sort().pop();
+  $("brief-time").textContent = last ? `ACTUALIZADO ${stamp(last)}` : "";
 }
 
 function render(st: Status<GitHub>) {
+  ghState = st;
   const gh = st.snapshot;
   const src = $("src-github");
   src.className = "src" + (st.connected ? " on" : "");
@@ -219,7 +267,7 @@ function render(st: Status<GitHub>) {
   $("repos").innerHTML = gh
     ? gh.repos.map(r => `<div class="row"><span>${r.name}${r.private ? ' <span class="lang">privado</span>' : ""}${r.language ? `<span class="lang">${r.language}</span>` : ""}</span><span>${rel(r.pushed_at)}</span></div>`).join("")
     : `<div class="row"><span class="muted">Sin datos</span><span></span></div>`;
-  brief(gh, st.connected);
+  brief();
 
   $("gh-state").textContent = st.connected ? `Conectado${gh ? ` · @${gh.login}` : ""}` : "Sin conectar";
   $("gh-state").className = "state" + (st.connected ? " on" : "");
@@ -231,7 +279,168 @@ function render(st: Status<GitHub>) {
   if (active) countUp($(active.getAttribute("aria-controls")!));
 }
 
+/* ---------- encargos: pintar ---------- */
+function setE(key: string, value: string, alarm = false) {
+  document.querySelectorAll<HTMLElement>(`[data-e="${key}"]`).forEach(n => { n.textContent = value; n.classList.toggle("alarm", alarm); });
+}
+
+function board(list: Encargo[]) {
+  const el = $("board");
+  if (!list.length) {
+    el.innerHTML = gmState.connected
+      ? `<div class="board-empty">Ningún encargo todavía. LIFE mira Gmail cada 10 minutos.</div>`
+      : `<div class="board-empty">Conecta Gmail en <b>F5 · Conexiones</b> para traer las hojas de encargo de glutamatocult.com.</div>`;
+    return;
+  }
+  el.innerHTML = COLUMNAS.map(col => {
+    const items = list.filter(e => e.estado === col);
+    const cards = items.map((e, i) => `
+      <button type="button" class="card${tarde(e) ? " late" : ""}" data-id="${esc(e.id)}" aria-pressed="${e.id === selected}" style="--i:${i}">
+        <span class="t">${esc(e.que || e.asunto)}</span>
+        <span class="n">${esc(e.nombre)}</span>
+        <span class="m"><span>${esc(e.tipo)}</span><span class="age">${col === "nuevo" ? espera(e.recibido) : rel(e.recibido)}</span></span>
+      </button>`).join("");
+    return `<div class="col"><div class="col-h"><span>${NOMBRE_ESTADO[col]}</span><b>${items.length}</b></div>
+      <div class="col-list">${cards || `<div class="col-empty">—</div>`}</div></div>`;
+  }).join("");
+  const desc = list.filter(e => e.estado === "descartado").length;
+  $("enc-foot").textContent = `GMAIL · SOLO LECTURA · CADA 10 MIN${desc ? ` · ${desc} DESCARTADO${desc === 1 ? "" : "S"}` : ""}`;
+}
+
+function ficha(e: Encargo | undefined) {
+  const el = $("ficha");
+  if (!e) { el.innerHTML = `<p class="muted">Elige un encargo del tablero para ver su hoja.</p>`; return; }
+  const filas: [string, string, boolean?][] = [
+    ["Recibido", `${stamp(e.recibido)} · ${rel(e.recibido)}`],
+    ["Respondido", e.respondido
+      ? `${stamp(e.respondido)} · ${Math.max(0, Math.round((new Date(e.respondido).getTime() - new Date(e.recibido).getTime()) / 3600000))} h después`
+      : "aún no"],
+    ["Correo", e.correo], ["Teléfono", e.telefono], ["Empresa o proyecto", e.empresa],
+    [e.tipo === "Software" ? "Plazo" : "Fecha", e.fecha], ["Lugar", e.lugar], ["Web actual", e.web],
+    ["Presupuesto", e.presupuesto, true], ["Idioma de la web", e.idioma],
+  ];
+  el.innerHTML = `
+    <div class="head"><h4>${esc(e.tipo)} · ${esc(e.que)}</h4><span class="${tarde(e) ? "late blink" : "muted"}">${tarde(e) ? `${espera(e.recibido)} SIN RESPUESTA` : esc(NOMBRE_ESTADO[e.estado] ?? e.estado).toUpperCase()}</span></div>
+    <div class="sub">${esc(e.nombre)}</div>
+    <div class="rows">${filas.filter(([, v]) => v).map(([k, v, money]) => `<div class="row"><span>${k}</span><span${money ? ' class="money"' : ""}>${k === "Recibido" || k === "Respondido" ? v : esc(v)}</span></div>`).join("")}</div>
+    ${e.mensaje ? `<div class="mensaje">${esc(e.mensaje)}</div>` : ""}
+    <div class="estados" role="group" aria-label="Estado del encargo">
+      ${ESTADOS.map(s => `<button type="button" class="btn" data-estado="${s}" aria-pressed="${s === e.estado}">${NOMBRE_ESTADO[s]}</button>`).join("")}
+    </div>
+    <div class="estados"><button type="button" class="btn" id="enc-open">Abrir en Gmail</button><span class="msg" id="enc-msg"></span></div>`;
+}
+
+function chart(list: Encargo[]) {
+  const svg = $("enc-chart") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  const now = new Date();
+  const months = Array.from({ length: 12 }, (_, i) => new Date(now.getFullYear(), now.getMonth() - 11 + i, 1));
+  const counts = months.map(m => list.filter(e => { const d = new Date(e.recibido); return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth(); }).length);
+  const max = Math.max(1, ...counts);
+  const x0 = 8, bw = 22, gap = 7, base = 140, H = 110;
+  svgEl("line", { x1: x0, y1: base + .5, x2: x0 + 12 * (bw + gap), y2: base + .5, stroke: K.grid, "stroke-width": 1 }, svg);
+  counts.forEach((c, i) => {
+    const x = x0 + i * (bw + gap), h = c ? Math.max(3, (c / max) * H) : 0;
+    if (h) svgEl("rect", { x, y: base - h, width: bw, height: h, fill: K.ph, "fill-opacity": i === 11 ? 1 : .55, class: "grow", style: `--i:${i}` }, svg);
+    if (c) label(svg, x + bw / 2, base - h - 5, c, { "text-anchor": "middle", fill: K.hi, class: "fade" });
+    label(svg, x + bw / 2, base + 16, MESES[months[i].getMonth()], { "text-anchor": "middle", "font-size": 9 });
+  });
+  const total = counts.reduce((a, b) => a + b, 0);
+  $("enc-chart-tot").textContent = `${total} EN TOTAL`;
+}
+
+function renderGmail(g: Gmail) {
+  gmState = g;
+  const list = g.encargos;
+  const now = new Date();
+  const sin = list.filter(sinResponder), late = list.filter(tarde);
+  const enMes = (e: Encargo, m: number, y: number) => { const d = new Date(e.recibido); return d.getMonth() === m && d.getFullYear() === y; };
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const mes = list.filter(e => enMes(e, now.getMonth(), now.getFullYear())).length;
+  const mesAnt = list.filter(e => enMes(e, prev.getMonth(), prev.getFullYear())).length;
+  const resp = list.filter(e => e.respondido && hoursSince(e.recibido) < 90 * 24)
+    .map(e => (new Date(e.respondido!).getTime() - new Date(e.recibido).getTime()) / 3600000).filter(h => h >= 0);
+  const cobrados = list.filter(e => e.estado === "cobrado" && new Date(e.recibido).getFullYear() === now.getFullYear()).length;
+  const has = g.connected || list.length > 0;
+
+  setE("sin", has ? String(sin.length) : "—", late.length > 0);
+  setE("sin_d", !has ? "conecta Gmail en F5" : late.length ? `${late.length} pasa${late.length === 1 ? "" : "n"} de ${LIMITE_H} h` : sin.length ? `el más antiguo: ${espera(sin.sort((a, b) => a.recibido.localeCompare(b.recibido))[0].recibido)}` : "al día");
+  setE("abiertos", has ? String(list.filter(abierto).length) : "—");
+  setE("abiertos_d", has ? `de ${list.length} en total` : "");
+  setE("mes", has ? String(mes) : "—");
+  setE("mes_d", has ? `${mesAnt} el mes pasado` : "");
+  setE("resp", resp.length ? `${fmt(resp.reduce((a, b) => a + b, 0) / resp.length, 1)} h` : "—");
+  setE("cobrados", has ? String(cobrados) : "—");
+  setE("cobrados_d", has ? `en ${now.getFullYear()} · importes en la fase 2` : "");
+
+  if (selected && !list.some(e => e.id === selected)) selected = null;
+  if (!selected) selected = (sin[0] ?? list.find(abierto))?.id ?? null;
+  board(list);
+  ficha(list.find(e => e.id === selected));
+  chart(list);
+  $("enc-sync").textContent = g.synced_at ? `SINCRONIZADO ${stamp(g.synced_at)}` : g.connected ? "SINCRONIZANDO…" : "SIN CONECTAR";
+
+  const src = $("src-gmail");
+  src.className = "src" + (g.connected ? (late.length ? " err" : " on") : "");
+  src.lastChild!.textContent = !g.connected ? "Gmail · sin conectar" : sin.length ? `Gmail · ${sin.length} sin responder` : "Gmail";
+  $("gm-state").textContent = g.connected ? `Conectado · ${g.user ?? ""}` : "Sin conectar";
+  $("gm-state").className = "state" + (g.connected ? " on" : "");
+  $("gm-form").hidden = g.connected;
+  $("gm-help").hidden = g.connected;
+  $("gm-sync").hidden = !g.connected;
+  $("gm-off").hidden = !g.connected;
+  brief();
+}
+
+$("board").addEventListener("click", e => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".card");
+  if (!card) return;
+  selected = card.dataset.id ?? null;
+  $("board").querySelectorAll(".card").forEach(c => c.setAttribute("aria-pressed", String(c === card)));
+  ficha(gmState.encargos.find(x => x.id === selected));
+});
+
+$("ficha").addEventListener("click", async e => {
+  const t = e.target as HTMLElement;
+  const id = selected;
+  if (!id) return;
+  const encMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = document.getElementById("enc-msg"); if (m) { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); } };
+  const estado = t.closest<HTMLElement>("[data-estado]")?.dataset.estado;
+  if (estado) {
+    if (!TAURI) { renderGmail({ ...gmState, encargos: gmState.encargos.map(x => x.id === id ? { ...x, estado } : x) }); return; }
+    try { renderGmail(await invoke<Gmail>("encargo_estado", { id, estado })); }
+    catch (err) { encMsg(String(err), "err"); }
+    return;
+  }
+  if (t.id === "enc-open") {
+    if (!TAURI) { encMsg("En modo demo no se abre Gmail.", "err"); return; }
+    try { await invoke("encargo_abrir", { id }); }
+    catch (err) { encMsg(String(err), "err"); }
+  }
+});
+
 /* ---------- datos de ejemplo fuera de la app ---------- */
+function demoGmail(): Gmail {
+  const ago = (h: number) => new Date(Date.now() - h * 3600000).toISOString();
+  const base = { uid: 0, asunto: "", telefono: "", empresa: "", web: "", idioma: "español", respondido: null as string | null };
+  const e = (id: string, h: number, tipo: string, que: string, nombre: string, estado: string, extra: Partial<Encargo> = {}): Encargo =>
+    ({ ...base, id, recibido: ago(h), tipo, que, nombre, correo: `${id}@example.com`, fecha: "", lugar: "", presupuesto: "", mensaje: "", estado, ...extra });
+  return {
+    connected: true, user: "ejemplo@gmail.com", synced_at: new Date().toISOString(),
+    encargos: [
+      e("lucia", 51, "Fotografía", "Retrato", "Lucía M.", "nuevo", { fecha: "2026-12-05", lugar: "Madrid", presupuesto: "300–600 €", mensaje: "Hola, me gustaría hacer unas fotos de retrato para mi web de ilustración.\n\nGracias." }),
+      e("cafe", 6, "Fotografía", "Producto", "Café Ámbar", "nuevo", { empresa: "Café Ámbar", presupuesto: "600–1.200 €", mensaje: "Necesitamos fotos de la carta nueva." }),
+      e("nora", 30, "Software", "Web", "Nora Ruiz", "respondido", { respondido: ago(26), fecha: "enero", presupuesto: "2.000–4.000 €" }),
+      e("tomas", 24 * 9, "Fotografía", "Evento", "Tomás G.", "presupuesto", { respondido: ago(24 * 9 - 3), lugar: "Valencia" }),
+      e("estudio", 24 * 16, "Software", "Tienda online", "Estudio Lino", "confirmado", { respondido: ago(24 * 16 - 5) }),
+      e("ines", 24 * 34, "Fotografía", "Retrato", "Inés P.", "cobrado", { respondido: ago(24 * 34 - 2) }),
+      e("bruno", 24 * 70, "Fotografía", "Boda", "Bruno y Sara", "cobrado", { respondido: ago(24 * 70 - 8) }),
+      e("kei", 24 * 120, "Software", "App", "Kei", "descartado", { respondido: ago(24 * 119) }),
+      e("mar", 24 * 200, "Fotografía", "Producto", "Mar Cerámica", "cobrado", { respondido: ago(24 * 199) }),
+    ],
+  };
+}
+
 function demo(): Status<GitHub> {
   let seed = 47;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -262,11 +471,43 @@ function demo(): Status<GitHub> {
 /* ---------- conexiones ---------- */
 const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
+const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+
 async function load() {
-  if (!TAURI) { render(demo()); return; }
+  if (!TAURI) { renderGmail(demoGmail()); render(demo()); return; }
+  try { renderGmail(await invoke<Gmail>("gmail_status")); }
+  catch (e) { gmMsg(String(e), "err"); }
   try { render(await invoke<Status<GitHub>>("github_status")); }
   catch (e) { msg(String(e), "err"); }
 }
+
+$("gm-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!TAURI) { gmMsg("En modo demo no se guarda nada.", "err"); return; }
+  const user = $<HTMLInputElement>("gm-user"), pass = $<HTMLInputElement>("gm-pass");
+  const btn = $<HTMLButtonElement>("gm-connect");
+  btn.disabled = true; gmMsg("Comprobando con Gmail y leyendo los encargos…");
+  try {
+    const g = await invoke<Gmail>("gmail_connect", { user: user.value, password: pass.value });
+    pass.value = "";
+    gmMsg(`Conectado. ${g.encargos.length} encargo${g.encargos.length === 1 ? "" : "s"} leído${g.encargos.length === 1 ? "" : "s"}.`, "ok");
+    renderGmail(g);
+  } catch (err) { gmMsg(String(err), "err"); }
+  finally { btn.disabled = false; }
+});
+
+$("gm-sync").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("gm-sync");
+  btn.disabled = true; gmMsg("Leyendo Gmail…");
+  try { renderGmail(await invoke<Gmail>("gmail_sync")); gmMsg("Sincronizado.", "ok"); }
+  catch (err) { gmMsg(String(err), "err"); $("src-gmail").className = "src err"; }
+  finally { btn.disabled = false; }
+});
+
+$("gm-off").addEventListener("click", async () => {
+  try { renderGmail(await invoke<Gmail>("gmail_disconnect")); gmMsg("Contraseña borrada de las credenciales de Windows. Los encargos leídos se quedan en life.db."); }
+  catch (err) { gmMsg(String(err), "err"); }
+});
 
 $("gh-form").addEventListener("submit", async e => {
   e.preventDefault();
@@ -304,6 +545,9 @@ if (TAURI) {
     catch { auto.checked = !auto.checked; }
   });
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
+  listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
+  // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
+  setInterval(() => renderGmail(gmState), 5 * 60 * 1000);
 } else {
   auto.disabled = true;
 }
