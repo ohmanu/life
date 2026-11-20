@@ -367,6 +367,16 @@ pub fn set_categoria(conn: &Connection, comercio: &str, categoria: &str) -> rusq
     Ok(())
 }
 
+/// Nombres de tus huchas («Cuenta con mejora activada»), sacados de los intereses importados por CSV.
+pub fn nombres_hucha(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut st = conn.prepare(
+        "SELECT DISTINCT substr(descripcion, 14) FROM transacciones
+         WHERE producto = 'ahorro' AND descripcion LIKE 'Intereses de %'",
+    )?;
+    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.filter_map(Result::ok).filter(|n| n.trim().len() >= 4 && n != "hucha").collect())
+}
+
 pub fn borrar_movs(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("DELETE FROM transacciones;")
 }
@@ -420,6 +430,24 @@ mod tests {
         assert_eq!(all[1].saldo, Some(97.5));
         set_categoria(&c, "cafe", "Restaurantes").unwrap();
         assert_eq!(categorias(&c).unwrap().get("cafe").map(String::as_str), Some("Restaurantes"));
+    }
+
+    #[test]
+    fn recuerda_el_nombre_de_la_hucha() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = open(dir.path(), &new_key()).unwrap();
+        let resumen = "\"Cuentas corrientes Estado de transacciones\",,,
+\"Cuenta personal (EUR)\",,,
+Fecha,Descripción,Categoría,\"Entradas/salidas de dinero\",Saldo
+\"1 ene 2026\",Mercadona,Comercio,\"-5,00€\",\"10,00€\"
+---------,,,
+\"Cuentas de Ahorro Transaction Statements\",,,
+\"Ahorros  (EUR)\",,,
+Fecha,Descripción,TAE,TIN,\"Gross interest\",\"Impuestos retenidos\",\"Other taxes\",Fees,\"Net interest\"
+1/1/26,\"Interés neto pagado a Cuenta con mejora activada del 1 ene 2026\",1%,1%,\"1,35€\",\"0,25€\",\"0,00€\",\"0,00€\",\"1,10€\"";
+        let p = crate::revolut::parse(resumen).unwrap();
+        upsert_movs(&mut c, &p.movs, "t").unwrap();
+        assert_eq!(nombres_hucha(&c).unwrap(), vec!["Cuenta con mejora activada".to_string()]);
     }
 
     #[test]

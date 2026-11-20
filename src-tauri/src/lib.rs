@@ -489,9 +489,12 @@ async fn banco_conectar(app: AppHandle) -> Result<DineroView, String> {
 /// Descarga movimientos y saldos de todas las cuentas autorizadas.
 async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
     let cliente = banco_cliente()?;
-    let (cuentas, desde): (Vec<banco::Cuenta>, String) = {
+    let (cuentas, desde, huchas): (Vec<banco::Cuenta>, String, Vec<String>) = {
         let state = app.state::<Db>();
         let conn = state.0.lock().map_err(|e| e.to_string())?;
+        // Revolut no da la hucha por Open Banking: su nombre sale de los intereses del resumen
+        // del ejercicio importado, para que los traspasos a ella sigan siendo internos.
+        let huchas = db::nombres_hucha(&conn).map_err(|e| e.to_string())?;
         let cuentas = db::ajuste(&conn, "banco_cuentas")
             .map_err(|e| e.to_string())?
             .and_then(|j| serde_json::from_str(&j).ok())
@@ -500,12 +503,13 @@ async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
         let desde = db::ajuste(&conn, "banco_desde")
             .map_err(|e| e.to_string())?
             .unwrap_or_else(|| (chrono::Local::now() - chrono::Duration::days(730)).format("%Y-%m-%d").to_string());
-        (cuentas, desde)
+        (cuentas, desde, huchas)
     };
     if cuentas.is_empty() {
         return Err("El banco no autorizó ninguna cuenta.".into());
     }
-    let propias: Vec<String> = cuentas.iter().filter_map(|c| c.name.clone()).collect();
+    let mut propias: Vec<String> = cuentas.iter().filter_map(|c| c.name.clone()).collect();
+    propias.extend(huchas);
     let resultado: Result<Vec<revolut::Mov>, String> = async {
         let mut movs = Vec::new();
         for c in &cuentas {
