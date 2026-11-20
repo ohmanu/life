@@ -352,6 +352,8 @@ struct Patrimonio {
     /// Saldo de la hucha que pusiste a mano y cuándo.
     hucha_saldo: Option<f64>,
     hucha_fecha: Option<String>,
+    /// TIN anual de la hucha en % (para estimar los intereses).
+    hucha_tin: Option<f64>,
 }
 
 fn patrimonio(conn: &rusqlite::Connection) -> Patrimonio {
@@ -366,6 +368,7 @@ fn patrimonio(conn: &rusqlite::Connection) -> Patrimonio {
         oro_precio_fecha: s("oro_precio_fecha"),
         hucha_saldo: n("hucha_saldo"),
         hucha_fecha: s("hucha_fecha"),
+        hucha_tin: n("hucha_tin"),
     }
 }
 
@@ -400,13 +403,16 @@ async fn actualizar_oro(app: &AppHandle) -> Result<(), String> {
 
 /// Ajuste a mano: onzas de oro (las que muestra Revolut) y saldo de la hucha hoy.
 #[tauri::command]
-async fn patrimonio_ajustar(app: AppHandle, oro_onzas: Option<f64>, hucha: Option<f64>) -> Result<DineroView, String> {
+async fn patrimonio_ajustar(app: AppHandle, oro_onzas: Option<f64>, hucha: Option<f64>, tin: Option<f64>) -> Result<DineroView, String> {
     {
         let state = app.state::<Db>();
         let conn = state.0.lock().map_err(|e| e.to_string())?;
         let e = |e: rusqlite::Error| e.to_string();
         if let Some(o) = oro_onzas.filter(|o| *o >= 0.0) {
             db::set_ajuste(&conn, "oro_onzas", &o.to_string()).map_err(e)?;
+        }
+        if let Some(t) = tin.filter(|t| (0.0..=20.0).contains(t)) {
+            db::set_ajuste(&conn, "hucha_tin", &t.to_string()).map_err(e)?;
         }
         if let Some(h) = hucha.filter(|h| *h >= 0.0) {
             db::set_ajuste(&conn, "hucha_saldo", &h.to_string()).map_err(e)?;

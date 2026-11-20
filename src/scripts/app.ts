@@ -449,8 +449,9 @@ type Banco = {
 type Patrimonio = {
   oro_onzas: number | null; oro_coste: number | null; oro_valor_resumen: number | null; oro_fecha: string | null;
   oro_precio: number | null; oro_precio_fecha: string | null; hucha_saldo: number | null; hucha_fecha: string | null;
+  hucha_tin: number | null;
 };
-const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null };
+const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null, hucha_tin: null };
 type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null; banco: Banco; patrimonio: Patrimonio };
 const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
 type Importe = { nuevos: number; solapados: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
@@ -563,6 +564,9 @@ function porMes(list: Mov[]) {
 }
 
 /** Último saldo de cada producto en euros. */
+/** Retención de IRPF sobre los intereses en España. */
+const RETENCION = .19;
+
 /** Hucha: Open Banking no la da. Último saldo conocido (resumen del ejercicio o puesto a mano)
  *  + traspasos desde la cuenta después de esa fecha + intereses estimados al ritmo del último mes. */
 function huchaEstimada(list: Mov[], p: Patrimonio) {
@@ -583,11 +587,15 @@ function huchaEstimada(list: Mov[], p: Patrimonio) {
   const traspasos = list
     .filter(m => m.producto === "cuenta" && m.divisa === "EUR" && m.fecha.slice(0, 10) > dia && catOf(m) === "Interno" && esHucha(m))
     .reduce((s, m) => s - m.importe, 0);
+  // Intereses: con tu TIN (neto de la retención del 19 %, se pagan a diario), o si no lo has
+  // puesto, al ritmo del último mes de intereses del resumen.
   const ultInt = [...ahorro].reverse().find(m => m.descripcion.startsWith("Intereses de"));
-  const diario = ultInt ? ultInt.importe / Math.max(1, +ultInt.fecha.slice(8, 10)) : 0;
   const dias = Math.max(0, Math.floor((Date.now() - fechaDe(base.fecha).getTime()) / DIA));
+  const diario = p.hucha_tin !== null
+    ? (base.saldo + traspasos) * p.hucha_tin / 100 / 365 * (1 - RETENCION)
+    : ultInt ? ultInt.importe / Math.max(1, +ultInt.fecha.slice(8, 10)) : 0;
   const intereses = diario * dias;
-  return { saldo: base.saldo + traspasos + intereses, base, traspasos, intereses, estimado: traspasos !== 0 || intereses > 0 };
+  return { saldo: base.saldo + traspasos + intereses, base, traspasos, intereses, diario, tin: p.hucha_tin, estimado: traspasos !== 0 || intereses > 0 };
 }
 
 function oroValor(p: Patrimonio) {
@@ -621,7 +629,8 @@ function patri(s: ReturnType<typeof saldos>) {
       <span class="d muted">${s.fecha ? `saldo a ${ddmm(fechaDe(s.fecha))} · ${rvState.banco.conectado ? "banco" : "CSV"}` : "sin saldo"}</span></div>
     <div><span class="k">Hucha${h?.estimado ? " ≈" : ""}</span><span class="v money">${h ? eur(h.saldo, 2) : "—"}</span>
       <span class="d muted">${h ? `${h.base.manual ? "puesto a mano" : "resumen"} el ${ddmm(fechaDe(h.base.fecha))}: <span class="money">${eur(h.base.saldo, 2)}</span>` : "importa el resumen del ejercicio o ajústala a mano"}</span>
-      ${h && (h.traspasos || h.intereses > 0) ? `<span class="d muted">${h.traspasos ? `traspasos <span class="money">${h.traspasos > 0 ? "+" : ""}${fmt(h.traspasos, 2)} €</span>` : ""}${h.traspasos && h.intereses > 0 ? " · " : ""}${h.intereses > 0 ? `intereses ≈ <span class="money">+${fmt(h.intereses, 2)} €</span>` : ""}</span>` : ""}</div>
+      ${h && (h.traspasos || h.intereses > 0) ? `<span class="d muted">${h.traspasos ? `traspasos <span class="money">${h.traspasos > 0 ? "+" : ""}${fmt(h.traspasos, 2)} €</span>` : ""}${h.traspasos && h.intereses > 0 ? " · " : ""}${h.intereses > 0 ? `intereses ≈ <span class="money">+${fmt(h.intereses, 2)} €</span>` : ""}</span>` : ""}
+      ${h && h.diario > 0 ? `<span class="d muted">${h.tin !== null ? `${fmt(h.tin, 2)} % TIN` : "ritmo del último mes"} · <span class="money">≈ ${fmt(h.diario, 2)} €</span>/día netos</span>` : ""}</div>
     <div><span class="k">Oro</span><span class="v money">${o ? eur(o.valor, 2) : "—"}</span>
       <span class="d muted">${o ? `${fmt(o.onzas, 6)} oz${o.precio ? ` × ${fmt(o.precio, 2)} €/oz` : " · valor del resumen"}` : "sin oro"}</span>
       ${o?.ganancia !== null && o?.ganancia !== undefined && o.coste ? `<span class="d">costó <span class="money">${eur(o.coste)}</span> · <span class="${o.ganancia >= 0 ? "up" : "down"} money">${o.ganancia >= 0 ? "+" : ""}${fmt(o.ganancia, 2)} € (${pct(o.ganancia, o.coste)})</span></span>` : ""}</div>
@@ -952,28 +961,30 @@ $("patri-edit").addEventListener("click", () => {
   const s = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
   $<HTMLInputElement>("pf-hucha").value = s.hucha ? s.hucha.saldo.toFixed(2) : "";
   $<HTMLInputElement>("pf-oro").value = rvState.patrimonio?.oro_onzas?.toString() ?? "";
+  $<HTMLInputElement>("pf-tin").value = rvState.patrimonio?.hucha_tin?.toString() ?? "";
   $<HTMLInputElement>("pf-hucha").focus();
 });
 $("pf-cancel").addEventListener("click", () => { $("patri-form").hidden = true; patriMsg(""); });
 $("patri-form").addEventListener("submit", async e => {
   e.preventDefault();
   const num = (id: string) => { const v = $<HTMLInputElement>(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
-  const hucha = num("pf-hucha"), oro = num("pf-oro");
-  if ((hucha !== null && !(hucha >= 0)) || (oro !== null && !(oro >= 0))) { patriMsg("Pon cifras positivas.", "err"); return; }
+  const hucha = num("pf-hucha"), oro = num("pf-oro"), tin = num("pf-tin");
+  if ((hucha !== null && !(hucha >= 0)) || (oro !== null && !(oro >= 0)) || (tin !== null && !(tin >= 0 && tin <= 20))) { patriMsg("Pon cifras positivas (el TIN, entre 0 y 20 %).", "err"); return; }
   const prev = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
   // Solo se guarda lo que cambió: si la hucha sigue igual que la estimación, no se fija a mano.
   const huchaCambia = hucha !== null && (!prev.hucha || Math.abs(prev.hucha.saldo - hucha) >= .005);
   const oroCambia = oro !== null && oro !== rvState.patrimonio?.oro_onzas;
-  if (!huchaCambia && !oroCambia) { $("patri-form").hidden = true; return; }
+  const tinCambia = tin !== null && tin !== rvState.patrimonio?.hucha_tin;
+  if (!huchaCambia && !oroCambia && !tinCambia) { $("patri-form").hidden = true; return; }
   if (!TAURI) {
     const now = new Date();
-    renderDinero({ ...rvState, patrimonio: { ...rvState.patrimonio, ...(huchaCambia ? { hucha_saldo: hucha, hucha_fecha: `${mesKey(now)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:00` } : {}), ...(oroCambia ? { oro_onzas: oro } : {}) } });
+    renderDinero({ ...rvState, patrimonio: { ...rvState.patrimonio, ...(huchaCambia ? { hucha_saldo: hucha, hucha_fecha: `${mesKey(now)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:00` } : {}), ...(oroCambia ? { oro_onzas: oro } : {}), ...(tinCambia ? { hucha_tin: tin } : {}) } });
     $("patri-form").hidden = true; patriMsg("Guardado (modo demo).", "ok"); return;
   }
   const btn = $<HTMLButtonElement>("pf-save");
   btn.disabled = true; patriMsg("Guardando y consultando el precio del oro…");
   try {
-    renderDinero(await invoke<Dinero>("patrimonio_ajustar", { oroOnzas: oroCambia ? oro : null, hucha: huchaCambia ? hucha : null }));
+    renderDinero(await invoke<Dinero>("patrimonio_ajustar", { oroOnzas: oroCambia ? oro : null, hucha: huchaCambia ? hucha : null, tin: tinCambia ? tin : null }));
     $("patri-form").hidden = true; patriMsg("Guardado.", "ok");
   } catch (err) { patriMsg(String(err), "err"); }
   finally { btn.disabled = false; }
@@ -1020,7 +1031,7 @@ function demoDinero(): Dinero {
   movimientos.sort((a, b) => a.fecha.localeCompare(b.fecha));
   return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: null,
     banco: { configurado: true, conectado: true, app_id: "demo", valido_hasta: new Date(Date.now() + 172 * DIA).toISOString(), sincronizado: new Date().toISOString(), cuentas: 2, error: null },
-    patrimonio: { ...SIN_PATRIMONIO, oro_onzas: 0.124945, oro_coste: 500, oro_valor_resumen: 404.39, oro_fecha: "2026-11-20", oro_precio: 3203.39, oro_precio_fecha: new Date().toISOString() } };
+    patrimonio: { ...SIN_PATRIMONIO, oro_onzas: 0.124945, oro_coste: 500, oro_valor_resumen: 404.39, oro_fecha: "2026-11-20", oro_precio: 3203.39, oro_precio_fecha: new Date().toISOString(), hucha_tin: 1.15 } };
 }
 
 function demoGmail(): Gmail {
