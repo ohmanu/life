@@ -94,6 +94,10 @@ const MIGRATIONS: &[&str] = &[
         categoria TEXT NOT NULL
     );
     ",
+    // 4 · origen de cada movimiento: csv o banco (Open Banking)
+    "
+    ALTER TABLE transacciones ADD COLUMN fuente TEXT NOT NULL DEFAULT 'csv';
+    ",
 ];
 
 /// Cabecera de un SQLite sin cifrar. Un archivo cifrado empieza por bytes aleatorios.
@@ -295,8 +299,8 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
         let mut prev = tx.prepare("SELECT estado, completada, saldo, importe FROM transacciones WHERE id = ?1")?;
         let mut ins = tx.prepare(
             "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
-                                        comision, divisa, estado, saldo, interno, importado)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                        comision, divisa, estado, saldo, interno, importado, fuente)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
         let mut upd = tx.prepare(
             "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5, importe = ?6, fecha = ?7
@@ -308,7 +312,7 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
             match old {
                 None => {
                     ins.execute(params![m.id, m.fecha, m.completada, m.tipo, m.producto, m.descripcion, m.comercio,
-                                        m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando])?;
+                                        m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando, m.fuente])?;
                     nuevos += 1;
                 }
                 // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se actualizan.
@@ -330,14 +334,14 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
 pub fn movs(conn: &Connection) -> rusqlite::Result<Vec<Mov>> {
     let mut st = conn.prepare(
         "SELECT id, fecha, completada, tipo, producto, descripcion, comercio, importe, comision, divisa,
-                estado, saldo, interno
+                estado, saldo, interno, fuente
          FROM transacciones ORDER BY fecha, rowid",
     )?;
     let rows = st.query_map([], |r| {
         Ok(Mov {
             id: r.get(0)?, fecha: r.get(1)?, completada: r.get(2)?, tipo: r.get(3)?, producto: r.get(4)?,
             descripcion: r.get(5)?, comercio: r.get(6)?, importe: r.get(7)?, comision: r.get(8)?,
-            divisa: r.get(9)?, estado: r.get(10)?, saldo: r.get(11)?, interno: r.get::<_, i64>(12)? != 0,
+            divisa: r.get(9)?, estado: r.get(10)?, saldo: r.get(11)?, interno: r.get::<_, i64>(12)? != 0, fuente: r.get(13)?,
         })
     })?;
     rows.collect()

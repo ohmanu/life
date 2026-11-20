@@ -287,6 +287,13 @@ button { font: inherit; }
 .subs .note.up { color: var(--alert); }
 .subs tfoot td { border-top: 1px solid var(--grid); color: var(--ph); }
 .sub-h { margin-top: var(--s5); }
+.conn-sub { margin: 0 0 var(--s2); font: 600 11px var(--f); letter-spacing: .14em; text-transform: uppercase; color: var(--ph); }
+.conn-sub ~ .conn-sub { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px dashed var(--grid); }
+.conn-sub .muted { letter-spacing: .06em; margin-left: var(--s2); }
+.conn-sub .warn { color: var(--alert); }
+.steps { margin: var(--s2) 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: 12px; }
+.steps li::marker { color: var(--ph); }
+.conn p + p { margin-top: var(--s2); }
 
 .demo-banner { background: var(--alert); color: var(--bg); text-align: center; font-size: 11px; letter-spacing: .14em; padding: 3px; }
 

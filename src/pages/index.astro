@@ -224,13 +224,32 @@ const tabs = [
               <div class="conn">
                 <div><h4>Revolut</h4><div class="state" id="rv-state">Sin extracto</div></div>
                 <div>
-                  <p>LIFE no se conecta a Revolut: le das el extracto y lo lee una vez. En la app de Revolut abre la cuenta →
-                    <b>Extracto</b> → formato <b>Excel (CSV)</b>, elige el periodo (la primera vez, desde el principio) y guárdalo en el ordenador.
-                    Puedes importar extractos que se solapan: no se duplica nada. Open Banking, más adelante.</p>
+                  <h5 class="conn-sub">Conexión directa · Open Banking <span class="muted" id="rv-bank-state"></span></h5>
+                  <div id="rv-bank-help">
+                    <p>Revolut no da acceso a cuentas personales: se entra por Open Banking (PSD2) con <span class="copy">Enable Banking</span>, gratis para tus propias cuentas. Solo permiso de lectura. Una vez:</p>
+                    <ol class="steps">
+                      <li>Crea una cuenta en <span class="copy">enablebanking.com/cp</span>.</li>
+                      <li>Registra una aplicación en <b>Production</b>: nombre <span class="copy">LIFE</span>, redirect URL exactamente <span class="copy">https://localhost/life</span>, tu correo, y en privacidad y condiciones vale <span class="copy">https://github.com/ohmanu/life</span>. Deja que genere la clave en el navegador: se descarga un <b>.pem</b>.</li>
+                      <li>En la aplicación pulsa <b>Activate by linking accounts</b> y vincula tu Revolut.</li>
+                      <li>Pega aquí el ID de la aplicación y elige el .pem. Queda en las credenciales de Windows: después borra el archivo.</li>
+                    </ol>
+                  </div>
+                  <form class="field" id="rv-bank-form" autocomplete="off">
+                    <input id="rv-app-id" type="text" placeholder="ID de la aplicación · aaaaaaaa-bbbb-…" aria-label="ID de la aplicación de Enable Banking" spellcheck="false" />
+                    <button class="btn solid" type="submit" id="rv-app-save">Elegir .pem y guardar</button>
+                  </form>
+                  <div class="field" id="rv-bank-actions" hidden>
+                    <button class="btn solid" type="button" id="rv-bank-connect">Conectar con Revolut</button>
+                    <button class="btn" type="button" id="rv-bank-sync" hidden>Sincronizar</button>
+                    <button class="btn danger" type="button" id="rv-bank-off">Desconectar</button>
+                  </div>
+                  <div class="msg" id="rv-bank-msg" role="status"></div>
+                  <h5 class="conn-sub">Extracto en CSV</h5>
+                  <p>En la app de Revolut: la cuenta → <b>Extracto</b> → <b>Excel (CSV)</b>, o el <b>Resumen del ejercicio</b>. Sirve para el histórico que el banco no da por Open Banking; lo que llega del banco manda sobre el CSV del mismo periodo.</p>
                   <div class="msg" data-import-msg role="status"></div>
                 </div>
                 <div class="actions">
-                  <button class="btn solid" type="button" data-import>Importar CSV</button>
+                  <button class="btn" type="button" data-import>Importar CSV</button>
                   <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
                 </div>
               </div>

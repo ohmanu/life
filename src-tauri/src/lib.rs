@@ -1,3 +1,4 @@
+mod banco;
 mod db;
 mod github;
 mod gmail;
@@ -333,6 +334,21 @@ struct DineroView {
     categorias: std::collections::HashMap<String, String>,
     importado: Option<String>,
     archivo: Option<String>,
+    banco: BancoView,
+}
+
+#[derive(Serialize)]
+struct BancoView {
+    /// Hay ID de aplicación y clave de Enable Banking guardados.
+    configurado: bool,
+    /// Hay sesión con Revolut.
+    conectado: bool,
+    app_id: Option<String>,
+    /// Hasta cuándo vale el permiso del banco (RFC 3339).
+    valido_hasta: Option<String>,
+    sincronizado: Option<String>,
+    cuentas: usize,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -351,7 +367,242 @@ fn dinero_view(conn: &rusqlite::Connection) -> Result<DineroView, String> {
         categorias: db::categorias(conn).map_err(e)?,
         importado: db::ajuste(conn, "revolut_importado").map_err(e)?,
         archivo: db::ajuste(conn, "revolut_archivo").map_err(e)?,
+        banco: banco_view(conn)?,
     })
+}
+
+fn banco_view(conn: &rusqlite::Connection) -> Result<BancoView, String> {
+    let e = |e: rusqlite::Error| e.to_string();
+    let app_id = secrets::get(banco::APP_ID)?;
+    let cuentas: Vec<banco::Cuenta> = db::ajuste(conn, "banco_cuentas")
+        .map_err(e)?
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
+    Ok(BancoView {
+        configurado: app_id.is_some() && secrets::get(banco::KEY)?.is_some(),
+        conectado: secrets::get(banco::SESSION)?.is_some(),
+        app_id,
+        valido_hasta: db::ajuste(conn, "banco_valido_hasta").map_err(e)?,
+        sincronizado: db::ajuste(conn, "banco_sincronizado").map_err(e)?,
+        cuentas: cuentas.len(),
+        error: db::ajuste(conn, "banco_error").map_err(e)?,
+    })
+}
+
+fn banco_cliente() -> Result<banco::Cliente, String> {
+    let app_id = secrets::get(banco::APP_ID)?.ok_or("Falta el ID de la aplicación de Enable Banking.")?;
+    let pem = banco::leer_clave()?.ok_or("Falta la clave privada de Enable Banking.")?;
+    banco::Cliente::new(&app_id, &pem)
+}
+
+/// Guarda el ID de la aplicación y la clave (eliges el .pem) y los comprueba contra Enable Banking.
+#[tauri::command]
+async fn banco_configurar(app: AppHandle, app_id: String) -> Result<Option<DineroView>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let app_id = app_id.trim().to_string();
+    if app_id.len() < 8 {
+        return Err("Pega el ID de la aplicación de Enable Banking.".into());
+    }
+    let a = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut d = a.dialog().file().set_title("Clave privada de Enable Banking (.pem)").add_filter("Clave PEM", &["pem", "key"]);
+        if let Some(w) = a.get_webview_window("main") {
+            d = d.set_parent(&w);
+        }
+        d.blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = picked else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    let pem = std::fs::read_to_string(&path).map_err(|e| format!("No se pudo leer la clave: {e}"))?;
+    banco::Cliente::new(&app_id, &pem)?.comprobar().await?;
+    banco::guardar_clave(&pem)?;
+    secrets::set(banco::APP_ID, &app_id)?;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(Some(dinero_view(&conn)?))
+}
+
+/// Abre la autorización de Revolut en una ventana de LIFE y, al volver, abre la sesión y sincroniza.
+#[tauri::command]
+async fn banco_conectar(app: AppHandle) -> Result<DineroView, String> {
+    let cliente = banco_cliente()?;
+    let state_tok = db::new_key();
+    let url = cliente.empezar(&state_tok).await?;
+    let url: tauri::Url = url.parse().map_err(|e| format!("Dirección de autorización no válida: {e}"))?;
+
+    if let Some(w) = app.get_webview_window("banco") {
+        let _ = w.destroy();
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let nav = tx.clone();
+    let esperado = state_tok.clone();
+    tauri::WebviewWindowBuilder::new(&app, "banco", tauri::WebviewUrl::External(url))
+        .title("LIFE · Autorizar Revolut (solo lectura)")
+        .inner_size(520.0, 780.0)
+        .center()
+        .on_navigation(move |u| {
+            if !u.as_str().starts_with(banco::REDIRECT) {
+                return true;
+            }
+            let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
+            let r = match (q.get("code"), q.get("state")) {
+                (Some(c), Some(s)) if *s == esperado => Ok(c.clone()),
+                (Some(_), _) => Err("La respuesta del banco no coincide con esta autorización.".to_string()),
+                _ => Err(q.get("error_description").or(q.get("error")).cloned().unwrap_or_else(|| "Autorización cancelada.".into())),
+            };
+            if let Some(s) = nav.lock().ok().and_then(|mut g| g.take()) {
+                let _ = s.send(r);
+            }
+            false
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    drop(tx);
+
+    let res = tokio::time::timeout(std::time::Duration::from_secs(15 * 60), rx).await;
+    if let Some(w) = app.get_webview_window("banco") {
+        let _ = w.destroy();
+    }
+    let code = match res {
+        Err(_) => return Err("La autorización tardó demasiado. Vuelve a intentarlo.".into()),
+        Ok(Err(_)) => return Err("Cerraste la ventana sin autorizar.".into()),
+        Ok(Ok(r)) => r?,
+    };
+    let sesion = cliente.sesion(&code).await?;
+    secrets::set(banco::SESSION, &sesion.session_id)?;
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        let e = |e: rusqlite::Error| e.to_string();
+        db::set_ajuste(&conn, "banco_cuentas", &serde_json::to_string(&sesion.accounts).map_err(|e| e.to_string())?).map_err(e)?;
+        if let Some(v) = sesion.valid_until() {
+            db::set_ajuste(&conn, "banco_valido_hasta", &v).map_err(e)?;
+        }
+        let _ = conn.execute("DELETE FROM ajustes WHERE clave IN ('banco_error', 'banco_desde', 'aviso_banco')", []);
+    }
+    sync_banco(&app).await
+}
+
+/// Descarga movimientos y saldos de todas las cuentas autorizadas.
+async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
+    let cliente = banco_cliente()?;
+    let (cuentas, desde): (Vec<banco::Cuenta>, String) = {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        let cuentas = db::ajuste(&conn, "banco_cuentas")
+            .map_err(|e| e.to_string())?
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        // La primera vez, todo lo que dé el banco; después, desde 10 días antes de la última.
+        let desde = db::ajuste(&conn, "banco_desde")
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| (chrono::Local::now() - chrono::Duration::days(730)).format("%Y-%m-%d").to_string());
+        (cuentas, desde)
+    };
+    if cuentas.is_empty() {
+        return Err("El banco no autorizó ninguna cuenta.".into());
+    }
+    let propias: Vec<String> = cuentas.iter().filter_map(|c| c.name.clone()).collect();
+    let resultado: Result<Vec<revolut::Mov>, String> = async {
+        let mut movs = Vec::new();
+        for c in &cuentas {
+            let raw = cliente.movimientos(&c.uid, &desde).await?;
+            let mut ms: Vec<revolut::Mov> = raw.iter().filter_map(|t| banco::a_mov(t, c, &propias)).collect();
+            ms.sort_by(|a, b| a.fecha.cmp(&b.fecha));
+            // Si el banco no da el saldo tras cada movimiento, el saldo actual va en el último.
+            if ms.iter().all(|m| m.saldo.is_none()) {
+                if let (Some(s), Some(last)) = (cliente.saldo(&c.uid).await?, ms.last_mut()) {
+                    last.saldo = Some(s);
+                }
+            }
+            movs.extend(ms);
+        }
+        Ok(movs)
+    }
+    .await;
+
+    let state = app.state::<Db>();
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let now = gmail::utc(chrono::Utc::now());
+    let movs = match resultado {
+        Ok(m) => m,
+        Err(err) => {
+            let _ = db::set_ajuste(&conn, "banco_error", &err);
+            db::log_sync(&conn, "banco", false, Some(&err));
+            return Err(err);
+        }
+    };
+    db::upsert_movs(&mut conn, &movs, &now).map_err(|e| e.to_string())?;
+    // Lo del banco manda sobre lo importado por CSV en el mismo periodo y producto.
+    let mut desde_por_producto: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for m in &movs {
+        let d = desde_por_producto.entry(m.producto.as_str()).or_insert(m.fecha.as_str());
+        if m.fecha.as_str() < *d {
+            *d = m.fecha.as_str();
+        }
+    }
+    for (producto, d) in desde_por_producto {
+        let _ = conn.execute(
+            "DELETE FROM transacciones WHERE fuente = 'csv' AND producto = ?1 AND fecha >= ?2",
+            rusqlite::params![producto, d],
+        );
+    }
+    let hasta = (chrono::Local::now() - chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
+    let e = |e: rusqlite::Error| e.to_string();
+    db::set_ajuste(&conn, "banco_desde", &hasta).map_err(e)?;
+    db::set_ajuste(&conn, "banco_sincronizado", &now).map_err(e)?;
+    let _ = conn.execute("DELETE FROM ajustes WHERE clave = 'banco_error'", []);
+    db::log_sync(&conn, "banco", true, Some(&format!("{} movimientos", movs.len())));
+    let view = dinero_view(&conn)?;
+    drop(conn);
+    let _ = app.emit("dinero-updated", &view);
+    Ok(view)
+}
+
+#[tauri::command]
+async fn banco_sync(app: AppHandle) -> Result<DineroView, String> {
+    sync_banco(&app).await
+}
+
+/// Quita el permiso del banco en LIFE. Con `todo`, también el ID y la clave de Enable Banking.
+/// Los movimientos ya descargados se quedan.
+#[tauri::command]
+fn banco_desconectar(app: AppHandle, todo: bool) -> Result<DineroView, String> {
+    secrets::delete(banco::SESSION)?;
+    if todo {
+        banco::borrar_clave()?;
+        secrets::delete(banco::APP_ID)?;
+    }
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let _ = conn.execute(
+        "DELETE FROM ajustes WHERE clave IN ('banco_cuentas', 'banco_valido_hasta', 'banco_desde', 'banco_error', 'aviso_banco')",
+        [],
+    );
+    dinero_view(&conn)
+}
+
+/// Aviso de Windows una vez cuando al permiso del banco le quedan 7 días o menos.
+fn avisar_banco(app: &AppHandle) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let Some(hasta) = db::ajuste(&conn, "banco_valido_hasta").map_err(|e| e.to_string())? else { return Ok(()) };
+    let Ok(h) = chrono::DateTime::parse_from_rfc3339(&hasta) else { return Ok(()) };
+    let dias = (h.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_days();
+    if dias > 7 || db::ajuste(&conn, "aviso_banco").map_err(|e| e.to_string())?.as_deref() == Some(&hasta) {
+        return Ok(());
+    }
+    let _ = app
+        .notification()
+        .builder()
+        .title("Revolut · renovar acceso")
+        .body(if dias < 0 { "El permiso del banco ha caducado. Renuévalo en LIFE → F5.".to_string() } else { format!("Al permiso del banco le quedan {dias} días. Renuévalo en LIFE → F5.") })
+        .show();
+    db::set_ajuste(&conn, "aviso_banco", &hasta).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -416,6 +667,23 @@ fn dinero_borrar(app: AppHandle) -> Result<DineroView, String> {
 }
 
 async fn sync_all(app: &AppHandle, github_too: bool) {
+    // Banco: cada 6 h como mucho (PSD2 permite unas 4 consultas al día sin ti delante).
+    if matches!(secrets::get(banco::SESSION), Ok(Some(_))) {
+        let toca = {
+            let state = app.state::<Db>();
+            let conn = state.0.lock();
+            conn.ok()
+                .and_then(|c| db::ajuste(&c, "banco_sincronizado").ok().flatten())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::hours(6))
+        };
+        if toca {
+            if let Err(e) = sync_banco(app).await {
+                log::warn!("banco: {e}");
+            }
+        }
+        let _ = avisar_banco(app);
+    }
     if matches!(secrets::get(gmail::PASS), Ok(Some(_))) {
         if let Err(e) = sync_gmail(app).await {
             log::warn!("gmail: {e}");
@@ -518,7 +786,11 @@ pub fn run() {
             dinero_status,
             dinero_importar,
             dinero_categoria,
-            dinero_borrar
+            dinero_borrar,
+            banco_configurar,
+            banco_conectar,
+            banco_sync,
+            banco_desconectar
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");

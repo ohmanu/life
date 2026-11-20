@@ -440,13 +440,18 @@ const REGLAS: [string, RegExp][] = [
 
 type Mov = {
   id: string; fecha: string; completada: string | null; tipo: string; producto: string; descripcion: string; comercio: string;
-  importe: number; comision: number; divisa: string; estado: string; saldo: number | null; interno: boolean;
+  importe: number; comision: number; divisa: string; estado: string; saldo: number | null; interno: boolean; fuente: string;
 };
-type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null };
+type Banco = {
+  configurado: boolean; conectado: boolean; app_id: string | null; valido_hasta: string | null;
+  sincronizado: string | null; cuentas: number; error: string | null;
+};
+type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null; banco: Banco };
+const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
 type Importe = { nuevos: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
 type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
 
-let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null };
+let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null, banco: SIN_BANCO };
 let mesSel: string | null = null;  // AAAA-MM
 let subsCache: Sub[] = [];
 
@@ -742,14 +747,72 @@ function renderDinero(d: Dinero) {
 
   const info = has ? `EXTRACTO ${d.importado ? stamp(d.importado) : ""} · ${fmt(list.length)} MOVIMIENTOS · ${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "SIN EXTRACTO · IMPORTA EL CSV DE REVOLUT";
   $("rv-info").textContent = info;
+  const b = d.banco ?? SIN_BANCO;
+  const dias = b.valido_hasta ? Math.floor((new Date(b.valido_hasta).getTime() - Date.now()) / DIA) : null;
+  const renovar = b.conectado && dias !== null && dias <= 7;
   const src = $("src-revolut");
-  src.className = "src" + (has ? " on" : "");
-  src.lastChild!.textContent = has ? `Revolut · CSV ${ddmm(fechaDe(list[list.length - 1].fecha))}` : "Revolut · sin datos";
-  $("rv-state").textContent = has ? `${fmt(list.length)} movimientos` : "Sin extracto";
-  $("rv-state").className = "state" + (has ? " on" : "");
+  src.className = "src" + (b.conectado ? (renovar || b.error ? " err" : " on") : has ? " on" : "");
+  src.lastChild!.textContent = b.conectado
+    ? (renovar ? (dias! < 0 ? "Revolut · permiso caducado" : `Revolut · renovar acceso en ${dias} d`) : b.error ? "Revolut · error" : "Revolut · banco")
+    : has ? `Revolut · CSV ${ddmm(fechaDe(list[list.length - 1].fecha))}` : "Revolut · sin datos";
+  $("rv-state").textContent = b.conectado ? `Conectado · ${b.cuentas} cuenta${b.cuentas === 1 ? "" : "s"}` : has ? `${fmt(list.length)} movimientos` : "Sin conectar";
+  $("rv-state").className = "state" + (b.conectado ? (renovar || b.error ? " err" : " on") : has ? " on" : "");
   $("rv-off").hidden = !has;
+  renderBanco(b, dias);
   brief();
 }
+
+function renderBanco(b: Banco, dias: number | null) {
+  const st = $("rv-bank-state");
+  st.className = "muted" + ((dias !== null && dias <= 7) || b.error ? " warn" : "");
+  st.textContent = b.conectado
+    ? `· ${dias !== null ? (dias < 0 ? "permiso caducado" : `permiso ${dias} d`) : "conectado"}${b.sincronizado ? ` · leído ${stamp(b.sincronizado)}` : ""}`
+    : b.configurado ? "· aplicación guardada" : "";
+  $("rv-bank-help").hidden = b.configurado;
+  $("rv-bank-form").hidden = b.configurado;
+  $("rv-bank-actions").hidden = !b.configurado;
+  $("rv-bank-connect").textContent = b.conectado ? "Renovar acceso" : "Conectar con Revolut";
+  $("rv-bank-sync").hidden = !b.conectado;
+  $("rv-bank-off").textContent = b.conectado ? "Desconectar" : "Olvidar aplicación";
+  if (b.error && !$("rv-bank-msg").textContent) bankMsg(b.error, "err");
+}
+
+const bankMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("rv-bank-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+
+async function bancoAccion(btn: HTMLButtonElement, aviso: string, fn: () => Promise<Dinero | null>, ok: (d: Dinero) => string) {
+  if (!TAURI) { bankMsg("En modo demo no se conecta nada: abre LIFE como app.", "err"); return; }
+  btn.disabled = true; bankMsg(aviso);
+  try {
+    const d = await fn();
+    if (!d) { bankMsg(""); return; }
+    mesSel = null;
+    renderDinero(d);
+    bankMsg(ok(d), "ok");
+  } catch (err) { bankMsg(String(err), "err"); }
+  finally { btn.disabled = false; }
+}
+
+$("rv-bank-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const id = $<HTMLInputElement>("rv-app-id");
+  bancoAccion($<HTMLButtonElement>("rv-app-save"), "Elige el archivo .pem de Enable Banking…",
+    () => invoke<Dinero | null>("banco_configurar", { appId: id.value }),
+    () => { id.value = ""; return "Aplicación comprobada y guardada en las credenciales de Windows. Ya puedes borrar el .pem."; });
+});
+$("rv-bank-connect").addEventListener("click", () =>
+  bancoAccion($<HTMLButtonElement>("rv-bank-connect"), "Autoriza en la ventana que se ha abierto (Revolut te pedirá confirmar en el móvil)…",
+    () => invoke<Dinero>("banco_conectar"),
+    d => `Conectado. ${fmt(d.movimientos.filter(m => m.fuente === "banco").length)} movimientos del banco.`));
+$("rv-bank-sync").addEventListener("click", () =>
+  bancoAccion($<HTMLButtonElement>("rv-bank-sync"), "Leyendo Revolut…",
+    () => invoke<Dinero>("banco_sync"),
+    () => "Sincronizado."));
+$("rv-bank-off").addEventListener("click", () => {
+  const todo = !rvState.banco.conectado;
+  bancoAccion($<HTMLButtonElement>("rv-bank-off"), "",
+    () => invoke<Dinero>("banco_desconectar", { todo }),
+    () => todo ? "ID y clave de Enable Banking borrados de las credenciales." : "Permiso del banco quitado de LIFE. Los movimientos se quedan. Para revocarlo también en Revolut: Ajustes → Privacidad → Apps conectadas.");
+});
 
 function cambiarMes(delta: number) {
   if (!mesSel) return;
@@ -811,7 +874,7 @@ $("rv-off").addEventListener("click", async () => {
   }
   borrarArmado = 0;
   b.textContent = "Borrar movimientos";
-  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null }); return; }
+  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null, banco: rvState.banco }); return; }
   try { renderDinero(await invoke<Dinero>("dinero_borrar")); rvMsg("Movimientos borrados de life.db. Las categorías que elegiste se conservan.", "ok"); }
   catch (err) { rvMsg(String(err), "err"); }
 });
@@ -828,7 +891,7 @@ function demoDinero(): Dinero {
     if (producto === "cuenta") saldo += importe; else hucha += importe;
     const f = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(9 + (n % 10))}:${pad(n % 60)}:00`;
     movimientos.push({
-      id: String(n++), fecha: f, completada: f, tipo, producto, descripcion, interno,
+      id: String(n++), fecha: f, completada: f, tipo, producto, descripcion, interno, fuente: "banco",
       comercio: descripcion.toLowerCase().split("*")[0].replace(/[^\p{L}\p{N}]+/gu, " ").trim(),
       importe: Math.round(importe * 100) / 100, comision: 0, divisa: "EUR", estado: "completado",
       saldo: Math.round((producto === "cuenta" ? saldo : hucha) * 100) / 100,
@@ -855,7 +918,8 @@ function demoDinero(): Dinero {
     add(day(25), "From EUR Current", 200, "transferencia", "ahorro", true);
   }
   movimientos.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: "ejemplo.csv" };
+  return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: null,
+    banco: { configurado: true, conectado: true, app_id: "demo", valido_hasta: new Date(Date.now() + 172 * DIA).toISOString(), sincronizado: new Date().toISOString(), cuentas: 2, error: null } };
 }
 
 function demoGmail(): Gmail {
@@ -986,6 +1050,7 @@ if (TAURI) {
   });
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
   listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
+  listen<Dinero>("dinero-updated", e => renderDinero(e.payload));
   // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
   setInterval(() => renderGmail(gmState), 5 * 60 * 1000);
 } else {

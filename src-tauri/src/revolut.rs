@@ -28,6 +28,8 @@ pub struct Mov {
     pub saldo: Option<f64>,
     /// Movimiento entre tus propias cuentas (hucha, cambio de divisa): no cuenta como ingreso ni gasto.
     pub interno: bool,
+    /// csv o banco.
+    pub fuente: String,
 }
 
 #[derive(Debug, Default)]
@@ -323,6 +325,7 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
                 estado: "completado".into(),
                 saldo: saldo.and_then(|i| amount(f(r, i))),
                 interno,
+                fuente: "csv".into(),
             });
         } else if let Some(i) = interes_col {
             if let (Some(fecha), Some(neto)) = (fecha_es(a), amount(f(r, i))) {
@@ -360,6 +363,7 @@ fn parse_resumen(text: &str) -> Result<Parsed, String> {
             estado: "completado".into(),
             saldo: if k + 1 == n_meses { cierre_hucha } else { None },
             interno: false,
+            fuente: "csv".into(),
         });
     }
     out.movs.sort_by(|a, b| a.fecha.cmp(&b.fecha));
@@ -429,6 +433,7 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
             divisa,
             estado: if estado_n.contains("pend") { "pendiente" } else { "completado" }.into(),
             saldo: amount(get(c.saldo)),
+            fuente: "csv".into(),
         });
     }
     if out.movs.is_empty() && out.ignorados == 0 {
