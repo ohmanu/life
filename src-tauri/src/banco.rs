@@ -216,6 +216,9 @@ impl Sesion {
     }
 }
 
+/// Palabras que delatan la hucha de Revolut («Cuenta con mejora activada», «Savings Vault topup»…).
+pub const HUCHA: &[&str] = &["cuenta con mejora", "cuenta remunerada", "savings", "pocket", "vault", "hucha", "ahorros"];
+
 fn hash(s: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.bytes() {
@@ -226,7 +229,8 @@ fn hash(s: &str) -> String {
 }
 
 /// Movimiento del banco → movimiento de LIFE. `None` si está cancelado o rechazado.
-/// `propias` son los nombres de tus cuentas: lo que va entre ellas es interno.
+/// `propias` son los nombres de tus huchas: lo que va entre la cuenta y ellas es interno.
+/// (Tu nombre no cuenta: lo que te mandas desde otro banco sí es dinero que entra.)
 pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
     let estado = t["status"].as_str().unwrap_or("BOOK");
     if matches!(estado, "CNCL" | "RJCT") {
@@ -265,7 +269,7 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
     .to_string();
     let interno = tipo == "cambio"
         || propias.iter().any(|p| p.len() >= 4 && todo.contains(&p.to_lowercase()))
-        || ["savings", "pocket", "vault", "hucha", "ahorros"].iter().any(|k| todo.contains(k));
+        || HUCHA.iter().any(|k| todo.contains(k));
     let ref_ = s(&t["entry_reference"]).or_else(|| s(&t["transaction_id"]));
     let id = hash(&match ref_ {
         Some(r) => format!("banco|{}|{r}", cuenta.uid),
@@ -329,8 +333,8 @@ mod tests {
             "transaction_amount": {"amount": "504.15", "currency": "EUR"}, "credit_debit_indicator": "CRDT",
             "remittance_information": ["Desde EUR Cuenta con mejora activada"]
         });
-        let m = a_mov(&t, &cuenta(), &["Cuenta con mejora activada".into()]).unwrap();
-        assert!(m.interno);
+        let m = a_mov(&t, &cuenta(), &[]).unwrap();
+        assert!(m.interno, "la hucha se reconoce sin saber su nombre");
         assert_eq!(m.importe, 504.15);
         let mut c = t.clone();
         c["status"] = json!("CNCL");

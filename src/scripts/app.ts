@@ -564,6 +564,43 @@ function porMes(list: Mov[]) {
 }
 
 /** Último saldo de cada producto en euros. */
+/** ¿Es un traspaso entre la cuenta y la hucha? Por el nombre de la hucha (de los intereses del
+ *  resumen) o por las palabras que usa Revolut («Cuenta con mejora activada», «Savings Vault»…). */
+function esHuchaDe(list: Mov[]) {
+  const nombres = [...new Set(list.filter(m => m.producto !== "cuenta")
+    .map(m => m.descripcion.match(/^Intereses de (.+)$/)?.[1]?.toLowerCase()).filter(Boolean))] as string[];
+  return (m: Mov) => {
+    const d = m.descripcion.toLowerCase();
+    return nombres.some(n => n.length >= 4 && d.includes(n)) || /cuenta con mejora|cuenta remunerada|hucha|savings|pocket|vault|ahorros/.test(d);
+  };
+}
+
+/** Patrimonio (cuenta + hucha + oro) a fin de cada mes, reconstruido hacia atrás desde hoy:
+ *  la cuenta, quitando los movimientos posteriores; la hucha, quitando traspasos e intereses
+ *  posteriores; el oro, a coste desde que se compró (el mes en curso, a precio de hoy). */
+function seriePatrimonio(list: Mov[], s: ReturnType<typeof saldos>, keys: string[]) {
+  const ahora = mesKey(new Date());
+  const cuenta = list.filter(m => m.producto === "cuenta" && m.divisa === "EUR");
+  const esHucha = esHuchaDe(list);
+  const oroFecha = rvState.patrimonio?.oro_fecha;
+  const compraOro = list.find(m => /\bxau\b/i.test(m.descripcion))?.fecha ?? (oroFecha ? `${oroFecha} 00:00:00` : null);
+  const oroCoste = s.oroInfo ? (s.oroInfo.coste ?? s.oroInfo.valor) : 0;
+  const diario = s.hucha?.diario ?? 0;
+  return keys.map(k => {
+    if (k >= ahora) return s.total;
+    const fin = `${k}-31 23:59:59`;
+    const despues = cuenta.filter(m => m.fecha > fin);
+    const c = s.cuenta - despues.reduce((a, m) => a + m.importe - m.comision, 0);
+    const finD = mesDe(k); finD.setMonth(finD.getMonth() + 1);
+    const dias = Math.max(0, (Date.now() - finD.getTime()) / DIA);
+    const h = s.hucha
+      ? Math.max(0, s.hucha.saldo + despues.filter(m => m.interno && esHucha(m)).reduce((a, m) => a + m.importe, 0) - diario * dias)
+      : 0;
+    const o = compraOro && compraOro <= fin ? oroCoste : 0;
+    return c + h + o;
+  });
+}
+
 /** Retención de IRPF sobre los intereses en España. */
 const RETENCION = .19;
 
@@ -579,11 +616,7 @@ function huchaEstimada(list: Mov[], p: Patrimonio) {
   if (!bases.length) return null;
   const base = bases.sort((a, b) => a.fecha.localeCompare(b.fecha)).pop()!;
   const dia = base.fecha.slice(0, 10);
-  const nombres = [...new Set(ahorro.map(m => m.descripcion.match(/^Intereses de (.+)$/)?.[1]?.toLowerCase()).filter(Boolean))] as string[];
-  const esHucha = (m: Mov) => {
-    const d = m.descripcion.toLowerCase();
-    return nombres.some(n => n.length >= 4 && d.includes(n)) || /hucha|savings|pocket|vault|ahorros/.test(d);
-  };
+  const esHucha = esHuchaDe(list);
   const traspasos = list
     .filter(m => m.producto === "cuenta" && m.divisa === "EUR" && m.fecha.slice(0, 10) > dia && catOf(m) === "Interno" && esHucha(m))
     .reduce((s, m) => s - m.importe, 0);
@@ -643,7 +676,7 @@ function patri(s: ReturnType<typeof saldos>) {
 const setM = (key: string, value: string, alarm = false) =>
   document.querySelectorAll<HTMLElement>(`[data-m="${key}"]`).forEach(n => { n.textContent = value; n.classList.toggle("alarm", alarm); });
 
-function flow(meses: Map<string, Mes>, keys: string[]) {
+function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   const svg = $("flow") as unknown as SVGSVGElement;
   svg.replaceChildren();
   if (!meses.size) { label(svg, 20, 110, "SIN DATOS · IMPORTA EL CSV DE REVOLUT", { fill: K.grid }); return; }
@@ -652,13 +685,13 @@ function flow(meses: Map<string, Mes>, keys: string[]) {
   svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: K.text, "stroke-width": 1.2 }, pat);
   const l = 46, r = 552, top = 18, base = 190, gw = (r - l) / keys.length, bw = gw * .3;
   const data = keys.map(k => meses.get(k) ?? { ing: 0, gas: 0, cats: new Map() });
-  let acc = 0;
-  const accs = data.map(d => (acc += d.ing - d.gas));
-  // Barras en su escala; la línea del ahorro acumulado, en la suya (su cifra va en la etiqueta).
+  // Barras en su escala; la línea del patrimonio, en la suya (sus cifras van en las etiquetas).
+  const accs = serie;
   const max = Math.max(1, ...data.map(d => Math.max(d.ing, d.gas)));
   const Y = (v: number) => base - v / max * (base - top);
-  const aMin = Math.min(0, ...accs), aMax = Math.max(1, ...accs);
-  const YL = (v: number) => base - (v - aMin) / (aMax - aMin || 1) * (base - top);
+  const aMin = Math.min(...accs), aMax = Math.max(...accs);
+  const margen = (aMax - aMin) * .15 || Math.max(1, Math.abs(aMax) * .05);
+  const YL = (v: number) => base - 14 - (v - aMin + margen) / (aMax - aMin + 2 * margen) * (base - top - 14);
   const zero = Y(0);
   for (let k = 0; k <= 3; k++) {
     const v = max * k / 3, y = Y(v);
@@ -673,13 +706,15 @@ function flow(meses: Map<string, Mes>, keys: string[]) {
     if (hi > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hi, width: bw, height: hi, fill: K.ph, "fill-opacity": sel ? 1 : .7, class: "grow", style: `--i:${i}` }, g);
     if (hg > 0) svgEl("rect", { x: x + gw / 2 + 1, y: zero - hg, width: bw, height: hg, fill: "url(#hatch)", stroke: K.text, "stroke-width": 1, class: "grow", style: `--i:${i}` }, g);
     label(g, x + gw / 2, base + 16, MESES[mesDe(k).getMonth()], { "text-anchor": "middle", "font-size": 9, fill: sel ? K.hi : K.grid });
-    const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)}`;
+    const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)} · patrimonio ${eur(serie[i])}`;
   });
   const pts = accs.map((v, i) => [l + i * gw + gw / 2, YL(v)]);
   svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
   const [lx, ly] = pts[pts.length - 1];
   svgEl("rect", { x: lx - 2.5, y: ly - 2.5, width: 5, height: 5, fill: K.hi, class: "fade" }, svg);
-  label(svg, Math.min(lx, r - 30), ly - 9, `${acc >= 0 ? "+" : ""}${eur(acc)}`, { "text-anchor": "middle", fill: K.hi, class: "fade money" });
+  label(svg, Math.min(lx, r - 34), ly - 9, eur(accs[accs.length - 1]), { "text-anchor": "middle", fill: K.hi, class: "fade money" });
+  const [fx, fy] = pts[0];
+  label(svg, fx + 2, fy - 9, eur(accs[0]), { "text-anchor": "start", fill: K.text, "font-size": 9, class: "fade money" });
 }
 
 function cats(m: Mes | undefined, media: Map<string, number>) {
@@ -813,7 +848,7 @@ function renderDinero(d: Dinero) {
   ($("m-prev") as HTMLButtonElement).disabled = !has || mesSel <= (conDatos[0] ?? mesSel);
 
   patri(s);
-  flow(meses, keys);
+  flow(meses, keys, seriePatrimonio(list, s, keys));
   cats(m, media);
   movs(list);
   subs(subsCache);

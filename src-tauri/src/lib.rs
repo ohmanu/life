@@ -614,8 +614,9 @@ async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
     if cuentas.is_empty() {
         return Err("El banco no autorizó ninguna cuenta.".into());
     }
-    let mut propias: Vec<String> = cuentas.iter().filter_map(|c| c.name.clone()).collect();
-    propias.extend(huchas);
+    // Solo las huchas: el nombre de la cuenta en Revolut es el tuyo, y lo que te mandas desde
+    // otro banco sí cuenta como dinero que entra.
+    let propias = huchas;
     let resultado: Result<Vec<revolut::Mov>, String> = async {
         let mut movs = Vec::new();
         for c in &cuentas {
@@ -739,6 +740,9 @@ async fn dinero_importar(app: AppHandle) -> Result<Option<Importe>, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     db::set_ajuste(&conn, "revolut_importado", &now).map_err(|e| e.to_string())?;
     db::set_ajuste(&conn, "revolut_archivo", &name).map_err(|e| e.to_string())?;
+    if let Some(h) = parsed.movs.iter().find_map(|m| m.descripcion.strip_prefix("Intereses de ")) {
+        db::set_ajuste(&conn, "hucha_nombre", h).map_err(|e| e.to_string())?;
+    }
     if let Some(o) = &parsed.oro {
         let e = |e: rusqlite::Error| e.to_string();
         db::set_ajuste(&conn, "oro_onzas", &o.onzas.to_string()).map_err(e)?;

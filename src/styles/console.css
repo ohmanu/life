@@ -267,7 +267,7 @@ button { font: inherit; }
 .cat .fill.hl { background: var(--alert); box-shadow: none; }
 .cat .amt { text-align: right; font-variant-numeric: tabular-nums; color: var(--hi); }
 .cat.total { border-top: 1px dashed var(--grid); padding-top: 6px; }
-.movs { max-height: 430px; overflow-y: auto; display: grid; align-content: start; }
+.movs { max-height: 430px; overflow-y: auto; display: grid; align-content: start; padding-right: var(--s3); scrollbar-gutter: stable; }
 .movs::-webkit-scrollbar { width: 8px; }
 .movs::-webkit-scrollbar-thumb { background: var(--grid); }
 .mov { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) 11em 6.5em; gap: var(--s3); align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px dashed var(--grid); }

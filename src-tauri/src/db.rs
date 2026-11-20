@@ -102,6 +102,19 @@ const MIGRATIONS: &[&str] = &[
     "
     DELETE FROM ajustes WHERE clave = 'banco_desde';
     ",
+    // 6 · traspasos con la hucha («Cuenta con mejora activada») internos; tu nombre ya no lo es.
+    //     La siguiente sincronización vuelve a leer todo el histórico con las reglas nuevas.
+    "
+    UPDATE transacciones SET interno = 1
+     WHERE fuente = 'banco' AND (lower(descripcion) LIKE '%cuenta con mejora%' OR lower(descripcion) LIKE '%cuenta remunerada%');
+    UPDATE transacciones SET interno = 0
+     WHERE fuente = 'banco' AND interno = 1 AND tipo <> 'cambio'
+       AND lower(descripcion) NOT LIKE '%cuenta con mejora%' AND lower(descripcion) NOT LIKE '%cuenta remunerada%'
+       AND lower(descripcion) NOT LIKE '%savings%' AND lower(descripcion) NOT LIKE '%pocket%'
+       AND lower(descripcion) NOT LIKE '%vault%' AND lower(descripcion) NOT LIKE '%hucha%'
+       AND lower(descripcion) NOT LIKE '%ahorros%';
+    DELETE FROM ajustes WHERE clave = 'banco_desde';
+    ",
 ];
 
 /// Cabecera de un SQLite sin cifrar. Un archivo cifrado empieza por bytes aleatorios.
@@ -393,7 +406,13 @@ pub fn nombres_hucha(conn: &Connection) -> rusqlite::Result<Vec<String>> {
          WHERE producto = 'ahorro' AND descripcion LIKE 'Intereses de %'",
     )?;
     let rows = st.query_map([], |r| r.get::<_, String>(0))?;
-    Ok(rows.filter_map(Result::ok).filter(|n| n.trim().len() >= 4 && n != "hucha").collect())
+    let mut out: Vec<String> = rows.filter_map(Result::ok).filter(|n| n.trim().len() >= 4 && n != "hucha").collect();
+    if let Some(n) = ajuste(conn, "hucha_nombre")? {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    Ok(out)
 }
 
 pub fn borrar_movs(conn: &Connection) -> rusqlite::Result<()> {
@@ -529,5 +548,44 @@ Fecha,Descripción,TAE,TIN,\"Gross interest\",\"Impuestos retenidos\",\"Other ta
             .filter_map(|e| e.ok())
             .any(|e| e.file_name().to_string_lossy().starts_with("life.db.ilegible-"));
         assert!(aside);
+    }
+}
+
+/// Diagnóstico local de la base real: `cargo test diagnostico_real -- --ignored --nocapture`.
+#[cfg(test)]
+mod diagnostico {
+    #[test]
+    #[ignore]
+    fn diagnostico_real() {
+        let key = crate::secrets::get("db_key").unwrap().expect("db_key");
+        let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap()).join("com.glutamato.life");
+        let c = super::open(&dir, &key).unwrap();
+        let mut st = c
+            .prepare(
+                "SELECT fuente, producto, count(*), min(fecha), max(fecha), sum(interno) FROM transacciones GROUP BY fuente, producto",
+            )
+            .unwrap();
+        let rows = st
+            .query_map([], |r| Ok(format!("{} {} n={} {}..{} internos={}", r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?)))
+            .unwrap();
+        for r in rows {
+            println!("{}", r.unwrap());
+        }
+        let mut st = c
+            .prepare(
+                "SELECT substr(fecha, 1, 7), round(sum(CASE WHEN importe > 0 AND interno = 0 THEN importe END)),
+                        round(sum(CASE WHEN importe < 0 AND interno = 0 THEN -importe END)),
+                        round(sum(CASE WHEN interno = 1 THEN importe END)), sum(interno)
+                 FROM transacciones WHERE fecha >= '2025-12' GROUP BY 1 ORDER BY 1",
+            )
+            .unwrap();
+        let rows = st
+            .query_map([], |r| Ok(format!("{} entra {:>8} sale {:>8} internos neto {:>8} n={}", r.get::<_, String>(0)?, r.get::<_, Option<f64>>(1)?.unwrap_or(0.0), r.get::<_, Option<f64>>(2)?.unwrap_or(0.0), r.get::<_, Option<f64>>(3)?.unwrap_or(0.0), r.get::<_, i64>(4)?)))
+            .unwrap();
+        for r in rows {
+            println!("{}", r.unwrap());
+        }
+        let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        println!("version {v}");
     }
 }
