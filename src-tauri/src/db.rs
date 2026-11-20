@@ -585,6 +585,16 @@ mod diagnostico {
         for r in rows {
             println!("{}", r.unwrap());
         }
+        if let Ok(Some(j)) = super::snapshot(&c, "instagram") {
+            let s: crate::instagram::Snapshot = serde_json::from_str(&j).unwrap();
+            let con = |f: fn(&crate::instagram::Post) -> Option<i64>| s.posts.iter().filter(|p| f(p).is_some()).count();
+            println!(
+                "ig seguidores={} posts={} con_alcance={} con_vistas={} con_guardados={} serie_alcance={} reach30={:?} views30={:?} engaged30={:?} inter30={:?} horas={}",
+                s.followers, s.posts.len(), con(|p| p.reach), con(|p| p.views), con(|p| p.saved), s.reach.len(),
+                s.reach_30, s.views_30, s.engaged_30, s.interactions_30, s.online.len()
+            );
+            println!("tipos {:?}", s.posts.iter().map(|p| p.product.as_str()).collect::<std::collections::BTreeSet<_>>());
+        }
         let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         println!("version {v}");
     }

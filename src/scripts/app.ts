@@ -479,7 +479,7 @@ function igChart(ig: Instagram | null) {
 
 function igHoras(ig: Instagram | null) {
   const el = $("ig-horas");
-  if (!ig || !ig.online.length) { el.innerHTML = ig ? `<span class="lbl-h">Mejor hora</span><span style="grid-column: span 24; text-align:left">Instagram la da con 100 seguidores o más.</span>` : ""; return; }
+  if (!ig || !ig.online.length) { el.innerHTML = ig ? `<span class="lbl-h">Mejor hora</span><span style="grid-column: span 24; text-align:left">${ig.followers < 100 ? "Instagram la da con 100 seguidores o más." : "Meta no da ahora esta métrica para tu cuenta."}</span>` : ""; return; }
   const max = Math.max(...ig.online);
   const top = ig.online.indexOf(max);
   el.innerHTML = `<span class="lbl-h">Conectados</span>` + ig.online.map((v, h) => `<i class="${h === top ? "top" : ""}" style="height:${4 + v / max * 22}px" title="${pad(h)}:00 · ${fmt(v)}"></i>`).join("")
