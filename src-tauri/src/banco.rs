@@ -104,15 +104,15 @@ impl Cliente {
         self.send(self.http.post(format!("{API}{path}")).json(&body)).await
     }
 
-    /// Nombre de Revolut en Enable Banking y validez máxima del permiso (en días).
+    /// Nombre de Revolut en Enable Banking y validez máxima del permiso (en segundos).
     async fn revolut(&self) -> Result<(String, i64), String> {
         let v = self.get("/aspsps", &[("country", PAIS), ("psu_type", "personal")]).await?;
         let a = v["aspsps"]
             .as_array()
             .and_then(|l| l.iter().find(|a| a["name"].as_str().is_some_and(|n| n.to_lowercase().contains("revolut"))))
             .ok_or("Enable Banking no ofrece Revolut en España.")?;
-        let max = a["maximum_consent_validity"].as_i64().map(|s| s / 86400).unwrap_or(90);
-        Ok((a["name"].as_str().unwrap_or("Revolut").to_string(), max.clamp(1, 180)))
+        let max = a["maximum_consent_validity"].as_i64().unwrap_or(90 * 86400);
+        Ok((a["name"].as_str().unwrap_or("Revolut").to_string(), max.clamp(86400, 180 * 86400)))
     }
 
     /// Comprueba que la aplicación y la clave valen (y que Revolut está disponible).
@@ -122,8 +122,9 @@ impl Cliente {
 
     /// Empieza la autorización: devuelve la dirección donde tú das permiso en Revolut.
     pub async fn empezar(&self, state: &str) -> Result<String, String> {
-        let (nombre, dias) = self.revolut().await?;
-        let hasta = (chrono::Utc::now() + chrono::Duration::days(dias)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let (nombre, max) = self.revolut().await?;
+        // Una hora por debajo del máximo: el reloj del banco y el de este equipo no van al segundo.
+        let hasta = (chrono::Utc::now() + chrono::Duration::seconds(max - 3600)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let v = self
             .post("/auth", json!({
                 "access": { "valid_until": hasta },
