@@ -242,7 +242,7 @@ function brief() {
   } else {
     lines.push(connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
   }
-  lines.push(`<span class="off">Dinero: fase 2 (Revolut).</span>`);
+  briefDinero(lines);
   const ul = $("brief");
   ul.innerHTML = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
   const last = [gh?.synced_at, gmState.synced_at].filter(Boolean).sort().pop();
@@ -371,7 +371,7 @@ function renderGmail(g: Gmail) {
   setE("mes_d", has ? `${mesAnt} el mes pasado` : "");
   setE("resp", resp.length ? `${fmt(resp.reduce((a, b) => a + b, 0) / resp.length, 1)} h` : "—");
   setE("cobrados", has ? String(cobrados) : "—");
-  setE("cobrados_d", has ? `en ${now.getFullYear()} · importes en la fase 2` : "");
+  setE("cobrados_d", has ? `en ${now.getFullYear()}` : "");
 
   if (selected && !list.some(e => e.id === selected)) selected = null;
   if (!selected) selected = (sin[0] ?? list.find(abierto))?.id ?? null;
@@ -419,7 +419,445 @@ $("ficha").addEventListener("click", async e => {
   }
 });
 
+/* ---------- dinero ---------- */
+const CATS = ["Ingresos", "Casa y facturas", "Súper", "Restaurantes", "Transporte", "Suscripciones", "Compras", "Equipo",
+  "Ocio", "Salud", "Viajes", "Impuestos", "Comisiones", "Efectivo", "Transferencias", "Otros", "Interno"] as const;
+/** Reglas automáticas por descripción. Lo que corriges a mano manda sobre ellas. */
+const REGLAS: [string, RegExp][] = [
+  ["Casa y facturas", /alquiler|\brent\b|iberdrola|endesa|naturgy|holaluz|octopus|canal de isabel|aguas? de|comunidad de prop|vodafone|orange|yoigo|masmovil|pepephone|lowi|simyo|digi\b|o2\b|seguro hogar/],
+  ["Súper", /mercadona|carrefour|lidl|aldi|\bdia\b|eroski|alcampo|consum|hipercor|ahorramas|bonpreu|caprabo|condis|spar\b|supermercado|froiz|gadis|bm\b/],
+  ["Restaurantes", /restaurante|\bbar\b|caf[eé]|cafeter|burger|mcdonald|kfc|telepizza|domino|just ?eat|glovo|deliveroo|uber ?eats|starbucks|tapas|pizzer|cervecer|taberna|bodega|sushi/],
+  ["Transporte", /\buber\b|cabify|bolt|renfe|metro|\bemt\b|\btmb\b|taxi|repsol|cepsa|\bbp\b|galp|shell|gasolin|parking|aparcamiento|bicing|free ?now|blablacar|ouigo|iryo|alsa|peaje|autopista/],
+  ["Viajes", /ryanair|vueling|iberia|easyjet|booking|airbnb|hotel|expedia|aena|trainline|hostel/],
+  ["Suscripciones", /netflix|spotify|hbo|\bmax\b|disney|prime video|amazon prime|apple\.com|itunes|icloud|google (one|storage|play)|youtube|adobe|github|openai|anthropic|claude|chatgpt|filmin|dazn|notion|figma|dropbox|microsoft|xbox|playstation|patreon|midjourney|canva/],
+  ["Equipo", /fotocasion|fotoprix|fujifilm|canon|nikon|sony|leica|bhphoto|b&h|adorama|calumet|apple store|pccomponentes|mediamarkt|coolmod/],
+  ["Compras", /amazon|aliexpress|zara|h&m|ikea|decathlon|corte ingl|primark|fnac|shein|wallapop|vinted|uniqlo|leroy/],
+  ["Salud", /farmacia|cl[ií]nica|dental|dentist|hospital|[oó]ptica|sanitas|adeslas|fisio|gimnasio|\bgym\b|basic-?fit|holmes|anytime/],
+  ["Ocio", /cine|yelmo|cinesa|teatro|concierto|ticketmaster|entradas|steam|museo|librer|casa del libro|escape/],
+  ["Impuestos", /agencia tributaria|aeat|hacienda|seguridad social|tgss|ayuntamiento|\bdgt\b|impuesto|tasa municipal/],
+  ["Comisiones", /\bfee\b|comisi[oó]n|plan (premium|metal|plus)|revolut (premium|metal|plus)/],
+];
+
+type Mov = {
+  id: string; fecha: string; completada: string | null; tipo: string; producto: string; descripcion: string; comercio: string;
+  importe: number; comision: number; divisa: string; estado: string; saldo: number | null; interno: boolean;
+};
+type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null };
+type Importe = { nuevos: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
+type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
+
+let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null };
+let mesSel: string | null = null;  // AAAA-MM
+let subsCache: Sub[] = [];
+
+const eur = (n: number, d = 0) => `${fmt(n, d)} €`;
+const mesKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const mesDe = (k: string) => new Date(+k.slice(0, 4), +k.slice(5, 7) - 1, 1);
+const mesNombre = (k: string, largo = false) => {
+  const d = mesDe(k);
+  return largo ? d.toLocaleDateString("es-ES", { month: "long", year: "numeric" }) : `${MESES[d.getMonth()]} ${d.getFullYear()}`;
+};
+const fechaDe = (f: string) => new Date(f.replace(" ", "T"));
+const ddmm = (d: Date) => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`;
+const DIA = 86400000;
+
+function autoCat(m: Mov): string {
+  if (m.interno) return "Interno";
+  if (m.tipo === "cajero") return "Efectivo";
+  if (m.tipo === "comision") return "Comisiones";
+  if (m.importe > 0 && m.tipo !== "reembolso") return "Ingresos";
+  const d = m.descripcion.toLowerCase();
+  for (const [cat, re] of REGLAS) if (re.test(d)) return cat;
+  if (m.tipo === "transferencia") return "Transferencias";
+  return "Otros";
+}
+function catOf(m: Mov): string {
+  const manual = rvState.categorias[m.comercio];
+  if (manual) return manual;
+  const a = autoCat(m);
+  return a === "Otros" && subsCache.some(s => s.comercio === m.comercio) ? "Suscripciones" : a;
+}
+/** Solo euros y nada interno: lo que cuenta para ingresos y gastos. */
+const cuenta = (m: Mov) => m.divisa === "EUR" && catOf(m) !== "Interno";
+
+function mediana(xs: number[]) {
+  const s = [...xs].sort((a, b) => a - b), n = s.length;
+  return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0;
+}
+
+/** Gasto del día a día: se repite, pero no es una suscripción. */
+const NO_RECURRENTE = new Set(["Súper", "Restaurantes", "Transporte", "Efectivo", "Compras", "Interno"]);
+/** Cargos que se repiten por comercio con intervalo y importe estables. */
+function detectarSubs(list: Mov[]): Sub[] {
+  const por = new Map<string, Mov[]>();
+  for (const m of list) {
+    if (m.divisa !== "EUR" || m.importe >= 0 || m.interno || NO_RECURRENTE.has(autoCat(m))) continue;
+    (por.get(m.comercio) ?? por.set(m.comercio, []).get(m.comercio)!).push(m);
+  }
+  const out: Sub[] = [];
+  const hoy = Date.now();
+  for (const [comercio, ms] of por) {
+    if (ms.length < 2) continue;
+    ms.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const t = ms.map(m => fechaDe(m.fecha).getTime());
+    const gaps = t.slice(1).map((x, i) => (x - t[i]) / DIA);
+    const g = mediana(gaps);
+    const tipo = g >= 6 && g <= 8 ? "semanal" : g >= 26 && g <= 35 ? "mensual" : g >= 350 && g <= 380 ? "anual" : null;
+    if (!tipo) continue;
+    const minimo = tipo === "semanal" ? 4 : tipo === "mensual" ? 3 : 2;
+    if (ms.length < minimo) continue;
+    const tol = tipo === "semanal" ? 2 : tipo === "mensual" ? 6 : 20;
+    if (gaps.filter(x => Math.abs(x - g) <= tol).length / gaps.length < .7) continue;
+    const amts = ms.map(m => -m.importe);
+    const med = mediana(amts.slice(-4));
+    if (amts.slice(-3).some(a => Math.abs(a - med) / med > .3)) continue;
+    const ultimo = new Date(t[t.length - 1]);
+    if ((hoy - ultimo.getTime()) / DIA > g * 1.5 + 5) continue;  // ya no se cobra
+    const last = amts[amts.length - 1];
+    // Subida de precio en los últimos 90 días, solo si antes era un importe fijo
+    // (las facturas variables no avisan).
+    let k = amts.length - 1;
+    while (k > 0 && Math.abs(amts[k - 1] - last) < .01) k--;
+    const prev = k > 0 ? amts[k - 1] : last;
+    const antes = amts.slice(Math.max(0, k - 3), k);
+    const fijo = antes.length >= 2 && antes.every(a => Math.abs(a - prev) < .01);
+    const reciente = k > 0 && (hoy - t[k]) / DIA <= 90;
+    const sube = fijo && reciente && last - prev >= .5 && last > prev * 1.01 ? last - prev : 0;
+    const cambio = new Date(t[k]);
+    out.push({
+      comercio, nombre: ms[ms.length - 1].descripcion, cada: tipo, dias: g, importe: last,
+      mensual: tipo === "semanal" ? last * 52 / 12 : tipo === "anual" ? last / 12 : last,
+      ultimo, proximo: new Date(ultimo.getTime() + Math.round(g) * DIA), sube,
+      desde: sube ? MESES[cambio.getMonth()] : "",
+    });
+  }
+  return out.sort((a, b) => b.mensual - a.mensual);
+}
+
+type Mes = { ing: number; gas: number; cats: Map<string, number> };
+function porMes(list: Mov[]) {
+  const map = new Map<string, Mes>();
+  for (const m of list) {
+    if (!cuenta(m)) continue;
+    const k = m.fecha.slice(0, 7);
+    const r = map.get(k) ?? map.set(k, { ing: 0, gas: 0, cats: new Map() }).get(k)!;
+    const c = catOf(m);
+    if (c === "Ingresos") r.ing += m.importe;
+    else {
+      const g = -m.importe + m.comision;
+      r.gas += g;
+      r.cats.set(c, (r.cats.get(c) ?? 0) + g);
+    }
+  }
+  return map;
+}
+
+/** Último saldo de cada producto en euros. */
+function saldos(list: Mov[]) {
+  const last = new Map<string, Mov>();
+  for (const m of list) if (m.saldo !== null && m.divisa === "EUR") last.set(m.producto, m);
+  const cuentaS = last.get("cuenta")?.saldo ?? 0;
+  let ahorro = 0;
+  for (const [p, m] of last) if (p !== "cuenta") ahorro += m.saldo ?? 0;
+  const fecha = [...last.values()].map(m => m.fecha).sort().pop() ?? null;
+  return { total: cuentaS + ahorro, cuenta: cuentaS, ahorro, fecha, hay: last.size > 0 };
+}
+
+const setM = (key: string, value: string, alarm = false) =>
+  document.querySelectorAll<HTMLElement>(`[data-m="${key}"]`).forEach(n => { n.textContent = value; n.classList.toggle("alarm", alarm); });
+
+function flow(meses: Map<string, Mes>, keys: string[]) {
+  const svg = $("flow") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  if (!meses.size) { label(svg, 20, 110, "SIN DATOS · IMPORTA EL CSV DE REVOLUT", { fill: K.grid }); return; }
+  const defs = svgEl("defs", {}, svg);
+  const pat = svgEl("pattern", { id: "hatch", width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+  svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: K.text, "stroke-width": 1.2 }, pat);
+  const l = 46, r = 552, top = 18, base = 190, gw = (r - l) / keys.length, bw = gw * .3;
+  const data = keys.map(k => meses.get(k) ?? { ing: 0, gas: 0, cats: new Map() });
+  let acc = 0;
+  const accs = data.map(d => (acc += d.ing - d.gas));
+  // Barras en su escala; la línea del ahorro acumulado, en la suya (su cifra va en la etiqueta).
+  const max = Math.max(1, ...data.map(d => Math.max(d.ing, d.gas)));
+  const Y = (v: number) => base - v / max * (base - top);
+  const aMin = Math.min(0, ...accs), aMax = Math.max(1, ...accs);
+  const YL = (v: number) => base - (v - aMin) / (aMax - aMin || 1) * (base - top);
+  const zero = Y(0);
+  for (let k = 0; k <= 3; k++) {
+    const v = max * k / 3, y = Y(v);
+    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.grid, "stroke-width": 1, "stroke-dasharray": k ? "2 4" : "" }, svg);
+    label(svg, l - 6, y + 3, fmt(Math.round(v / 100) * 100), { "text-anchor": "end", "font-size": 9, class: "money" });
+  }
+  keys.forEach((k, i) => {
+    const d = data[i], x = l + i * gw, sel = k === mesSel;
+    const g = svgEl("g", { class: "col", "data-mes": k }, svg);
+    svgEl("rect", { x, y: top - 8, width: gw, height: base - top + 30, fill: K.ph, "fill-opacity": sel ? .08 : 0, class: "hit" }, g);
+    const hi = zero - Y(d.ing), hg = zero - Y(d.gas);
+    if (hi > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hi, width: bw, height: hi, fill: K.ph, "fill-opacity": sel ? 1 : .7, class: "grow", style: `--i:${i}` }, g);
+    if (hg > 0) svgEl("rect", { x: x + gw / 2 + 1, y: zero - hg, width: bw, height: hg, fill: "url(#hatch)", stroke: K.text, "stroke-width": 1, class: "grow", style: `--i:${i}` }, g);
+    label(g, x + gw / 2, base + 16, MESES[mesDe(k).getMonth()], { "text-anchor": "middle", "font-size": 9, fill: sel ? K.hi : K.grid });
+    const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)}`;
+  });
+  const pts = accs.map((v, i) => [l + i * gw + gw / 2, YL(v)]);
+  svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
+  const [lx, ly] = pts[pts.length - 1];
+  svgEl("rect", { x: lx - 2.5, y: ly - 2.5, width: 5, height: 5, fill: K.hi, class: "fade" }, svg);
+  label(svg, Math.min(lx, r - 30), ly - 9, `${acc >= 0 ? "+" : ""}${eur(acc)}`, { "text-anchor": "middle", fill: K.hi, class: "fade money" });
+}
+
+function cats(m: Mes | undefined, media: Map<string, number>) {
+  const el = $("cats");
+  const rows = m ? [...m.cats].filter(([, v]) => Math.abs(v) >= .5).sort((a, b) => b[1] - a[1]) : [];
+  if (!rows.length) { el.innerHTML = `<p class="muted">Sin gastos este mes.</p>`; return; }
+  const max = Math.max(...rows.map(r => r[1]));
+  el.innerHTML = rows.map(([c, v], i) => {
+    const avg = media.get(c) ?? 0;
+    const up = avg > 20 && v > avg * 1.5;
+    return `<div class="cat"><span>${esc(c)}${up ? `<span class="up">↑${fmt(v / avg, 1)}×</span>` : ""}</span>
+      <span class="track"><span class="fill${up ? " hl" : ""}" style="width:${Math.max(0, v / max * 100)}%;--i:${i}"></span></span>
+      <span class="amt money">${eur(v)}</span></div>`;
+  }).join("") + `<div class="cat total"><span>Total</span><span></span><span class="amt money">${eur(rows.reduce((s, r) => s + r[1], 0))}</span></div>`;
+}
+
+function movs(list: Mov[]) {
+  const el = $("movs");
+  const rows = list.filter(m => m.fecha.startsWith(mesSel ?? "-")).reverse();
+  $("movs-n").textContent = rows.length ? `${rows.length} MOVIMIENTO${rows.length === 1 ? "" : "S"}` : "";
+  if (!rows.length) { el.innerHTML = `<p class="muted">${list.length ? "Sin movimientos este mes." : "Importa el CSV de Revolut para ver tus movimientos."}</p>`; return; }
+  el.innerHTML = rows.map(m => {
+    const c = catOf(m);
+    const opts = CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("");
+    const extra = [m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
+    return `<div class="mov${c === "Interno" ? " int" : ""}">
+      <span class="muted">${ddmm(fechaDe(m.fecha))}</span>
+      <span class="ds" title="${esc(m.descripcion)}">${esc(m.descripcion)}${extra ? `<small>${esc(extra)}</small>` : ""}</span>
+      <select data-comercio="${esc(m.comercio)}" aria-label="Categoría de ${esc(m.descripcion)}">${opts}</select>
+      <span class="amt money${m.importe > 0 ? " pos" : ""}">${m.importe > 0 ? "+" : ""}${fmt(m.importe, 2)}${m.divisa === "EUR" ? " €" : ""}</span>
+    </div>`;
+  }).join("");
+}
+
+function subs(list: Sub[]) {
+  const tot = list.reduce((s, x) => s + x.mensual, 0);
+  $("subs").innerHTML = list.length
+    ? list.map(s => `<tr><td>${esc(s.nombre)}<span class="note${s.sube ? " up" : ""}">${s.cada}${s.sube ? ` · ▲ sube ${fmt(s.sube, 2)} € en ${s.desde}` : ""}</span></td>
+        <td class="r money">${fmt(s.importe, 2)} €</td></tr>`).join("")
+      + `<tfoot><tr><td>Al mes · al año</td><td class="r money">${eur(tot, 2)} · ${eur(tot * 12)}</td></tr></tfoot>`
+    : `<tr><td class="muted">${rvState.movimientos.length ? "No se ve ningún cargo que se repita." : "Sin datos."}</td></tr>`;
+  const hoy = Date.now();
+  const prox = list.filter(s => s.proximo.getTime() - hoy <= 30 * DIA).sort((a, b) => a.proximo.getTime() - b.proximo.getTime());
+  $("proximos").innerHTML = prox.length
+    ? prox.map(s => {
+        const late = s.proximo.getTime() < hoy - DIA;
+        return `<div class="row"><span>${ddmm(s.proximo)} · ${esc(s.nombre)}${late ? ' <span class="muted">(previsto)</span>' : ""}</span><span class="money">${fmt(s.importe, 2)} €</span></div>`;
+      }).join("")
+    : `<div class="row"><span class="muted">Nada previsto</span><span></span></div>`;
+}
+
+function briefDinero(lines: string[]) {
+  const list = rvState.movimientos;
+  if (!list.length) { lines.push(`<span class="off">Dinero: importa el CSV de Revolut en <b>F3</b>.</span>`); return; }
+  const meses = porMes(list);
+  const k = mesKey(new Date());
+  const m = meses.get(k);
+  const prev = [...meses.keys()].filter(x => x < k).sort().slice(-6);
+  const media = prev.length ? prev.reduce((s, x) => s + meses.get(x)!.gas, 0) / prev.length : 0;
+  if (m) {
+    // Ritmo: lo gastado hasta hoy contra lo que llevabas al mismo día en los meses anteriores.
+    const dia = new Date().getDate();
+    const hastaDia = new Map<string, number>();
+    for (const x of list) {
+      const mk = x.fecha.slice(0, 7);
+      if (!prev.includes(mk) || +x.fecha.slice(8, 10) > dia || !cuenta(x) || catOf(x) === "Ingresos") continue;
+      hastaDia.set(mk, (hastaDia.get(mk) ?? 0) - x.importe + x.comision);
+    }
+    const ref = prev.length ? prev.reduce((s, k2) => s + (hastaDia.get(k2) ?? 0), 0) / prev.length : 0;
+    const ritmo = ref ? m.gas / ref : 1;
+    lines.push(`Este mes llevas <b class="money">${eur(m.gas)}</b> gastados${media ? ` y la media es <b class="money">${eur(media)}</b>` : ""}`
+      + (media && ritmo > 1.15 ? `: <span class="hot">vas un ${fmt((ritmo - 1) * 100)} % por encima de tu ritmo</span>.` : "."));
+  }
+  const hoy = Date.now();
+  const pronto = subsCache.filter(s => s.proximo.getTime() >= hoy - DIA && s.proximo.getTime() - hoy <= 7 * DIA);
+  if (pronto.length) lines.push(`Cobros en 7 días: ${pronto.map(s => `<b>${esc(s.nombre)}</b> <span class="money">${fmt(s.importe, 2)} €</span> el ${ddmm(s.proximo)}`).join(" · ")}.`);
+  const suben = subsCache.filter(s => s.sube);
+  if (suben.length) lines.push(suben.map(s => `<span class="hot">${esc(s.nombre)} sube ${fmt(s.sube, 2)} €</span>`).join(" · ") + ".");
+  const ultimo = list[list.length - 1];
+  if (daysAgo(ultimo.fecha.slice(0, 10)) > 35) lines.push(`<span class="off">El último extracto acaba el ${ddmm(fechaDe(ultimo.fecha))}: importa uno nuevo.</span>`);
+}
+
+function renderDinero(d: Dinero) {
+  rvState = d;
+  const list = d.movimientos;
+  subsCache = [];
+  subsCache = detectarSubs(list);
+  const meses = porMes(list);
+  const now = mesKey(new Date());
+  const conDatos = [...meses.keys()].sort();
+  const ultimo = conDatos[conDatos.length - 1] ?? now;
+  const fin = [now, ultimo].sort().pop()!;
+  if (!mesSel) mesSel = meses.has(now) ? now : ultimo;
+  if (mesSel > fin) mesSel = fin;
+  if (conDatos.length && mesSel < conDatos[0]) mesSel = conDatos[0];
+  const keys = Array.from({ length: 12 }, (_, i) => { const x = mesDe(fin); x.setMonth(x.getMonth() - 11 + i); return mesKey(x); });
+
+  const m = meses.get(mesSel);
+  const prev = conDatos.filter(k => k < mesSel!).slice(-6);
+  const media = new Map<string, number>();
+  let gMedia = 0, tMedia: number[] = [];
+  for (const k of prev) {
+    const x = meses.get(k)!;
+    gMedia += x.gas / prev.length;
+    if (x.ing > 0) tMedia.push((x.ing - x.gas) / x.ing * 100);
+    for (const [c, v] of x.cats) media.set(c, (media.get(c) ?? 0) + v / prev.length);
+  }
+  const has = list.length > 0;
+  const s = saldos(list);
+  const nombre = MESES[mesDe(mesSel).getMonth()];
+  setM("saldo", s.hay ? eur(s.total) : "—");
+  setM("saldo_d", s.hay ? (s.ahorro ? `cuenta ${eur(s.cuenta)} · hucha ${eur(s.ahorro)}` : `a ${ddmm(fechaDe(s.fecha!))}`) : has ? "el CSV no trae saldo" : "importa el CSV en F3");
+  setM("ing_k", `Ingresos · ${nombre}`);
+  setM("gas_k", `Gastos · ${nombre}`);
+  setM("ing", has ? eur(m?.ing ?? 0) : "—");
+  setM("gas", has ? eur(m?.gas ?? 0) : "—");
+  const ingMedia = prev.reduce((a, k) => a + meses.get(k)!.ing, 0) / (prev.length || 1);
+  setM("ing_d", prev.length ? `media ${eur(ingMedia)}` : "");
+  setM("gas_d", prev.length ? `media ${eur(gMedia)}` : "");
+  const tasa = m && m.ing > 0 ? (m.ing - m.gas) / m.ing * 100 : null;
+  setM("tasa", tasa === null ? "—" : `${fmt(tasa)} %`, tasa !== null && tasa < 0);
+  setM("tasa_d", tMedia.length ? `media 6 m: ${fmt(tMedia.reduce((a, b) => a + b, 0) / tMedia.length)} %` : "");
+  const gas6 = conDatos.filter(k => k < now).slice(-6);
+  const gasto6 = gas6.reduce((a, k) => a + meses.get(k)!.gas, 0) / (gas6.length || 1);
+  const colchon = s.hay && gasto6 > 0 ? s.total / gasto6 : null;
+  setM("colchon", colchon === null ? "—" : `${fmt(colchon, 1)} meses`, colchon !== null && colchon < 1);
+  setM("cats_h", `Gasto por categoría · ${nombre}`);
+  setM("movs_h", `Movimientos · ${nombre}`);
+  $("m-label").textContent = mesNombre(mesSel);
+  ($("m-next") as HTMLButtonElement).disabled = mesSel >= fin;
+  ($("m-prev") as HTMLButtonElement).disabled = !has || mesSel <= (conDatos[0] ?? mesSel);
+
+  flow(meses, keys);
+  cats(m, media);
+  movs(list);
+  subs(subsCache);
+
+  const info = has ? `EXTRACTO ${d.importado ? stamp(d.importado) : ""} · ${fmt(list.length)} MOVIMIENTOS · ${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "SIN EXTRACTO · IMPORTA EL CSV DE REVOLUT";
+  $("rv-info").textContent = info;
+  const src = $("src-revolut");
+  src.className = "src" + (has ? " on" : "");
+  src.lastChild!.textContent = has ? `Revolut · CSV ${ddmm(fechaDe(list[list.length - 1].fecha))}` : "Revolut · sin datos";
+  $("rv-state").textContent = has ? `${fmt(list.length)} movimientos` : "Sin extracto";
+  $("rv-state").className = "state" + (has ? " on" : "");
+  $("rv-off").hidden = !has;
+  brief();
+}
+
+function cambiarMes(delta: number) {
+  if (!mesSel) return;
+  const d = mesDe(mesSel); d.setMonth(d.getMonth() + delta);
+  mesSel = mesKey(d);
+  renderDinero(rvState);
+  countUp($("v-dinero"));
+}
+$("m-prev").addEventListener("click", () => cambiarMes(-1));
+$("m-next").addEventListener("click", () => cambiarMes(1));
+$("flow").addEventListener("click", e => {
+  const k = (e.target as Element).closest("[data-mes]")?.getAttribute("data-mes");
+  if (k) { mesSel = k; renderDinero(rvState); }
+});
+
+const rvMsg = (text: string, kind: "ok" | "err" | "" = "") =>
+  document.querySelectorAll<HTMLElement>("[data-import-msg]").forEach(m => { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); });
+
+$("movs").addEventListener("change", async e => {
+  const sel = e.target as HTMLSelectElement;
+  const comercio = sel.dataset.comercio;
+  if (!comercio) return;
+  const muestra = rvState.movimientos.find(m => m.comercio === comercio)!;
+  const valor = sel.value === autoCat(muestra) ? "" : sel.value;
+  const n = rvState.movimientos.filter(m => m.comercio === comercio).length;
+  try {
+    const d = TAURI
+      ? await invoke<Dinero>("dinero_categoria", { comercio, categoria: valor })
+      : { ...rvState, categorias: Object.fromEntries(Object.entries({ ...rvState.categorias, [comercio]: valor }).filter(([, v]) => v)) };
+    renderDinero(d);
+    rvMsg(`«${sel.value}» para ${n} movimiento${n === 1 ? "" : "s"} de ${muestra.descripcion}.`, "ok");
+  } catch (err) { rvMsg(String(err), "err"); }
+});
+
+document.querySelectorAll<HTMLButtonElement>("[data-import]").forEach(b => b.addEventListener("click", async () => {
+  if (!TAURI) { rvMsg("En modo demo no se importa nada: abre LIFE como app.", "err"); return; }
+  const all = document.querySelectorAll<HTMLButtonElement>("[data-import]");
+  all.forEach(x => (x.disabled = true));
+  rvMsg("Elige el CSV del extracto…");
+  try {
+    const r = await invoke<Importe | null>("dinero_importar");
+    if (!r) { rvMsg(""); return; }
+    mesSel = null;
+    renderDinero(r.vista);
+    rvMsg(`${fmt(r.leidos)} leídos · ${fmt(r.nuevos)} nuevos · ${fmt(r.actualizados)} actualizados${r.ignorados ? ` · ${r.ignorados} revertidos o rechazados, fuera` : ""}.`, "ok");
+    countUp($("v-dinero"));
+  } catch (err) { rvMsg(String(err), "err"); }
+  finally { all.forEach(x => (x.disabled = false)); }
+}));
+
+let borrarArmado = 0;
+$("rv-off").addEventListener("click", async () => {
+  const b = $<HTMLButtonElement>("rv-off");
+  if (Date.now() - borrarArmado > 4000) {
+    borrarArmado = Date.now();
+    b.textContent = "¿Seguro? Pulsa otra vez";
+    setTimeout(() => { b.textContent = "Borrar movimientos"; }, 4000);
+    return;
+  }
+  borrarArmado = 0;
+  b.textContent = "Borrar movimientos";
+  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null }); return; }
+  try { renderDinero(await invoke<Dinero>("dinero_borrar")); rvMsg("Movimientos borrados de life.db. Las categorías que elegiste se conservan.", "ok"); }
+  catch (err) { rvMsg(String(err), "err"); }
+});
+
 /* ---------- datos de ejemplo fuera de la app ---------- */
+function demoDinero(): Dinero {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const movimientos: Mov[] = [];
+  const hoy = new Date();
+  let saldo = 1800, hucha = 4200, n = 0;
+  const add = (d: Date, descripcion: string, importe: number, tipo = "tarjeta", producto = "cuenta", interno = false) => {
+    if (d > hoy) return;
+    if (producto === "cuenta") saldo += importe; else hucha += importe;
+    const f = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(9 + (n % 10))}:${pad(n % 60)}:00`;
+    movimientos.push({
+      id: String(n++), fecha: f, completada: f, tipo, producto, descripcion, interno,
+      comercio: descripcion.toLowerCase().split("*")[0].replace(/[^\p{L}\p{N}]+/gu, " ").trim(),
+      importe: Math.round(importe * 100) / 100, comision: 0, divisa: "EUR", estado: "completado",
+      saldo: Math.round((producto === "cuenta" ? saldo : hucha) * 100) / 100,
+    });
+  };
+  for (let i = 13; i >= 0; i--) {
+    const y = hoy.getFullYear(), mo = hoy.getMonth() - i;
+    const day = (d: number) => new Date(y, mo, d);
+    add(day(1), "To Alquiler estudio", -650, "transferencia");
+    add(day(2), "Payment from Estudio Lino", 1400 + Math.round(rnd() * 900), "transferencia");
+    if (rnd() > .4) add(day(18), `Payment from ${["Café Ámbar", "Nora Ruiz", "Mar Cerámica", "Bruno y Sara"][i % 4]}`, 300 + Math.round(rnd() * 800), "transferencia");
+    add(day(3), "Netflix.com", i <= 1 ? -13.99 : -12.99);
+    add(day(5), "Spotify", -11.99);
+    add(day(9), "Adobe *Creative Cloud", -24.19);
+    add(day(12), "Apple.com/bill iCloud", -2.99);
+    add(day(6), "Iberdrola", -38 - rnd() * 30, "transferencia");
+    add(day(4), "Digi Mobil", -15);
+    for (let w = 0; w < 4; w++) add(day(4 + w * 7), "Mercadona", -45 - rnd() * 40);
+    for (let r = 0; r < 4; r++) add(day(8 + r * 5), ["Bar Lola", "Taberna El Sur", "Glovo*Pedido", "Sushi Kao"][r], -12 - rnd() * 35);
+    add(day(14), "Renfe Viajeros", -8 - rnd() * 30);
+    if (rnd() > .5) add(day(20), "Amazon.es*AB12CD", -20 - rnd() * 60);
+    if (i === 1) add(day(22), "Fotocasion", -899);
+    add(day(25), "To EUR Savings", -200, "transferencia", "cuenta", true);
+    add(day(25), "From EUR Current", 200, "transferencia", "ahorro", true);
+  }
+  movimientos.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: "ejemplo.csv" };
+}
+
 function demoGmail(): Gmail {
   const ago = (h: number) => new Date(Date.now() - h * 3600000).toISOString();
   const base = { uid: 0, asunto: "", telefono: "", empresa: "", web: "", idioma: "español", respondido: null as string | null };
@@ -474,7 +912,9 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { renderGmail(demoGmail()); render(demo()); return; }
+  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); render(demo()); return; }
+  try { renderDinero(await invoke<Dinero>("dinero_status")); }
+  catch (e) { rvMsg(String(e), "err"); }
   try { renderGmail(await invoke<Gmail>("gmail_status")); }
   catch (e) { gmMsg(String(e), "err"); }
   try { render(await invoke<Status<GitHub>>("github_status")); }

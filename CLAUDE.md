@@ -21,7 +21,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 ## Stack
 
 - Interfaz: Astro 7 estático + TypeScript estricto + CSS propio. `src/pages/index.astro` (estructura), `src/scripts/app.ts` (lógica, gráficas SVG, llamadas a Rust). Fuera de Tauri se pinta en modo demo con datos de ejemplo.
-- Núcleo: Rust en `src-tauri/`. `lib.rs` (comandos, bandeja, arranque, sincronización periódica), `db.rs` (SQLite `life.db` en `%APPDATA%\com.glutamato.life`, migraciones añadidas al final de `MIGRATIONS`; cifrada en formato SQLCipher 4 con SQLite3 Multiple Ciphers que compila `build.rs`, sin OpenSSL; clave `db_key` en las credenciales de Windows), `github.rs`, `gmail.rs`, `secrets.rs`.
+- Núcleo: Rust en `src-tauri/`. `lib.rs` (comandos, bandeja, arranque, sincronización periódica), `db.rs` (SQLite `life.db` en `%APPDATA%\com.glutamato.life`, migraciones añadidas al final de `MIGRATIONS`; cifrada en formato SQLCipher 4 con SQLite3 Multiple Ciphers que compila `build.rs`, sin OpenSSL; clave `db_key` en las credenciales de Windows), `github.rs`, `gmail.rs`, `revolut.rs`, `secrets.rs`. Icono de la bandeja: `src-tauri/icons/tray.png`.
 - Ventana sin marco nativo (`decorations: false`): la barra de título es propia. Cerrar esconde en la bandeja; salir desde el menú de la bandeja. Arranque con Windows opcional (`--bandeja`).
 - Permisos de ventana y plugins en `src-tauri/capabilities/default.json`.
 
@@ -35,12 +35,13 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut: CSV, luego Open Banking) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
+0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV hecha; falta Open Banking y conciliar encargo ↔ cobro) · 3 Redes (Instagram, YouTube) · 4 Parte del día y radar (Claude) · 5 Extras.
 
 ## Notas
 
 - Gmail va por IMAP con contraseña de aplicación (`gmail_user`, `gmail_app_password` en las credenciales). Solo `EXAMINE` y `BODY.PEEK[]`: nunca marcar, mover, etiquetar, borrar ni enviar. «Respondido» = hay un correo tuyo a la dirección del cliente. Los demás estados se marcan en LIFE y no se escriben en Gmail.
 - Sincronización: Gmail cada 10 min, GitHub cada hora. Avisos de Windows: encargo nuevo y 48 h sin respuesta (una vez por encargo).
+- Revolut: se importa el CSV del extracto (inglés o español, coma o punto y coma) con el diálogo de archivos; huella por movimiento, reimportar no duplica y pasa pendientes a completados. Movimientos a la hucha, de otros productos o de cambio de divisa son «Interno» y no cuentan. Categorías automáticas por reglas en `app.ts` (`REGLAS`); la que eliges a mano se guarda por comercio en la tabla `categorias`. Suscripciones y cálculos de ingresos, gastos, ahorro y colchón se hacen en `app.ts`, solo en euros.
 
 - El instalador (`LIFE_<versión>_x64-setup.exe`, NSIS, por usuario, sin permisos de administrador) no va a Git; se regenera con `npm run app:build`.
 - Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no.

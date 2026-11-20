@@ -4,7 +4,8 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 use crate::gmail::{Encargo, Pendiente};
-use std::collections::HashSet;
+use crate::revolut::Mov;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -67,6 +68,31 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE encargos ADD COLUMN web TEXT;
     ALTER TABLE encargos ADD COLUMN cambiado TEXT;
     CREATE INDEX encargos_recibido ON encargos (recibido);
+    ",
+    // 3 · dinero desde el CSV de Revolut (la tabla de la fase 0 estaba vacía)
+    "
+    DROP TABLE transacciones;
+    CREATE TABLE transacciones (
+        id          TEXT PRIMARY KEY,   -- huella del movimiento
+        fecha       TEXT NOT NULL,      -- inicio, AAAA-MM-DD HH:MM:SS
+        completada  TEXT,
+        tipo        TEXT NOT NULL,
+        producto    TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        comercio    TEXT NOT NULL,
+        importe     REAL NOT NULL,
+        comision    REAL NOT NULL DEFAULT 0,
+        divisa      TEXT NOT NULL,
+        estado      TEXT NOT NULL,
+        saldo       REAL,
+        interno     INTEGER NOT NULL DEFAULT 0,
+        importado   TEXT NOT NULL
+    );
+    CREATE INDEX transacciones_fecha ON transacciones (fecha);
+    CREATE TABLE categorias (
+        comercio  TEXT PRIMARY KEY,     -- la categoría que eliges se recuerda por comercio
+        categoria TEXT NOT NULL
+    );
     ",
 ];
 
@@ -258,6 +284,85 @@ pub fn set_estado(conn: &Connection, id: &str, estado: &str, cuando: &str) -> ru
     conn.execute("UPDATE encargos SET estado = ?2, cambiado = ?3 WHERE id = ?1", params![id, estado, cuando])
 }
 
+// ── Dinero ────────────────────────────────────────────────────────────────
+
+/// Guarda los movimientos de un extracto. Uno que ya estaba solo se actualiza (por ejemplo,
+/// de pendiente a completado). Devuelve (nuevos, actualizados).
+pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlite::Result<(usize, usize)> {
+    let tx = conn.transaction()?;
+    let (mut nuevos, mut cambiados) = (0, 0);
+    {
+        let mut prev = tx.prepare("SELECT estado, completada, saldo FROM transacciones WHERE id = ?1")?;
+        let mut ins = tx.prepare(
+            "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
+                                        comision, divisa, estado, saldo, interno, importado)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )?;
+        let mut upd = tx.prepare(
+            "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5 WHERE id = ?1",
+        )?;
+        for m in movs {
+            let old: Option<(String, Option<String>, Option<f64>)> =
+                prev.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
+            match old {
+                None => {
+                    ins.execute(params![m.id, m.fecha, m.completada, m.tipo, m.producto, m.descripcion, m.comercio,
+                                        m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando])?;
+                    nuevos += 1;
+                }
+                Some((estado, completada, saldo)) => {
+                    if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo) {
+                        upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision])?;
+                        cambiados += 1;
+                    }
+                }
+            }
+        }
+    }
+    tx.commit()?;
+    Ok((nuevos, cambiados))
+}
+
+pub fn movs(conn: &Connection) -> rusqlite::Result<Vec<Mov>> {
+    let mut st = conn.prepare(
+        "SELECT id, fecha, completada, tipo, producto, descripcion, comercio, importe, comision, divisa,
+                estado, saldo, interno
+         FROM transacciones ORDER BY fecha, rowid",
+    )?;
+    let rows = st.query_map([], |r| {
+        Ok(Mov {
+            id: r.get(0)?, fecha: r.get(1)?, completada: r.get(2)?, tipo: r.get(3)?, producto: r.get(4)?,
+            descripcion: r.get(5)?, comercio: r.get(6)?, importe: r.get(7)?, comision: r.get(8)?,
+            divisa: r.get(9)?, estado: r.get(10)?, saldo: r.get(11)?, interno: r.get::<_, i64>(12)? != 0,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn categorias(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
+    let mut st = conn.prepare("SELECT comercio, categoria FROM categorias")?;
+    let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
+/// Categoría elegida para un comercio; vacía = volver a la automática.
+pub fn set_categoria(conn: &Connection, comercio: &str, categoria: &str) -> rusqlite::Result<()> {
+    if categoria.is_empty() {
+        conn.execute("DELETE FROM categorias WHERE comercio = ?1", [comercio])?;
+    } else {
+        conn.execute(
+            "INSERT INTO categorias (comercio, categoria) VALUES (?1, ?2)
+             ON CONFLICT(comercio) DO UPDATE SET categoria = excluded.categoria",
+            params![comercio, categoria],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn borrar_movs(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("DELETE FROM transacciones;")
+}
+
 pub fn log_sync(conn: &Connection, fuente: &str, ok: bool, detalle: Option<&str>) {
     let now = chrono::Local::now().to_rfc3339();
     let _ = conn.execute(
@@ -290,6 +395,23 @@ mod tests {
 
         let c = open(dir.path(), &key).unwrap();
         assert_eq!(snapshot(&c, "github").unwrap().as_deref(), Some("{\"a\":1}"));
+    }
+
+    #[test]
+    fn reimportar_no_duplica_y_completa_pendientes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = open(dir.path(), &new_key()).unwrap();
+        let h = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\n";
+        let a = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-06 13:30:00,,Cafe,-2.50,0,EUR,PENDING,\nTOPUP,Current,2026-10-01 08:00:00,2026-10-01 08:00:00,Pago,100,0,EUR,COMPLETED,100")).unwrap();
+        assert_eq!(upsert_movs(&mut c, &a.movs, "t1").unwrap(), (2, 0));
+        let b = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-06 13:30:00,2026-10-07 09:00:00,Cafe,-2.50,0,EUR,COMPLETED,97.50")).unwrap();
+        assert_eq!(upsert_movs(&mut c, &b.movs, "t2").unwrap(), (0, 1));
+        let all = movs(&c).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[1].estado, "completado");
+        assert_eq!(all[1].saldo, Some(97.5));
+        set_categoria(&c, "cafe", "Restaurantes").unwrap();
+        assert_eq!(categorias(&c).unwrap().get("cafe").map(String::as_str), Some("Restaurantes"));
     }
 
     #[test]

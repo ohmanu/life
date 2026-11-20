@@ -38,7 +38,7 @@ const tabs = [
         <span class="sources">
           <span class="src" id="src-github"><i></i>GitHub</span>
           <span class="src" id="src-gmail"><i></i>Gmail</span>
-          <span class="src"><i></i>Revolut · fase 2</span>
+          <span class="src" id="src-revolut"><i></i>Revolut</span>
           <span class="src"><i></i>Instagram · fase 3</span>
           <span class="src"><i></i>YouTube · fase 3</span>
         </span>
@@ -114,16 +114,50 @@ const tabs = [
 
         <!-- DINERO -->
         <section class="view" id="v-dinero" role="tabpanel" aria-labelledby="tab-dinero" hidden>
-          <div class="grid"><div class="cell c-12 pending">
-            <span class="tag">FASE 2 · REVOLUT</span>
-            <h2>Dinero</h2>
-            <p>Primero con el CSV que exporta la app de Revolut; después con Open Banking para que se actualice solo.</p>
-            <ul>
-              <li>Ingresos, gastos, tasa de ahorro y colchón</li>
-              <li>Categorías que corriges una vez por comercio</li>
-              <li>Suscripciones, subidas de precio y próximos cobros</li>
-            </ul>
-          </div></div>
+          <div class="grid">
+            <div class="cell c-12">
+              <div class="strip">
+                <div class="monthnav" role="group" aria-label="Mes">
+                  <button type="button" class="btn" id="m-prev" aria-label="Mes anterior">◂</button>
+                  <span id="m-label">—</span>
+                  <button type="button" class="btn" id="m-next" aria-label="Mes siguiente">▸</button>
+                </div>
+                <span class="muted" id="rv-info">SIN EXTRACTO · IMPORTA EL CSV DE REVOLUT</span>
+                <button type="button" class="btn solid" data-import>Importar CSV</button>
+              </div>
+              <div class="msg" data-import-msg role="status"></div>
+            </div>
+            <div class="cell c-12">
+              <div class="kpis five">
+                <div class="kpi"><div class="k">Saldo</div><div class="v money" data-m="saldo">—</div><div class="d money" data-m="saldo_d"></div></div>
+                <div class="kpi"><div class="k" data-m="ing_k">Ingresos</div><div class="v money" data-m="ing">—</div><div class="d money" data-m="ing_d"></div></div>
+                <div class="kpi"><div class="k" data-m="gas_k">Gastos</div><div class="v money" data-m="gas">—</div><div class="d money" data-m="gas_d"></div></div>
+                <div class="kpi"><div class="k">Tasa de ahorro</div><div class="v" data-m="tasa">—</div><div class="d" data-m="tasa_d"></div></div>
+                <div class="kpi"><div class="k">Colchón</div><div class="v" data-m="colchon">—</div><div class="d">al gasto medio de 6 meses</div></div>
+              </div>
+            </div>
+            <div class="cell c-7">
+              <div class="cell-h"><h3>Ingresos y gastos · 12 meses</h3><span class="jp">収支</span></div>
+              <svg class="heat-svg" id="flow" viewBox="0 0 560 230" role="img" aria-label="Ingresos y gastos de los últimos 12 meses"></svg>
+              <div class="legend"><span><i class="lg-in"></i>Ingresos</span><span><i class="lg-out"></i>Gastos</span><span><i class="lg-acc"></i>Ahorro acumulado</span><span class="muted">pulsa un mes para verlo</span></div>
+            </div>
+            <div class="cell c-5">
+              <div class="cell-h"><h3 data-m="cats_h">Gasto por categoría</h3><span class="jp">分類</span></div>
+              <div class="cats" id="cats"></div>
+              <div class="foot"><span>↑ = POR ENCIMA DE SU MEDIA DE 6 MESES</span></div>
+            </div>
+            <div class="cell c-7">
+              <div class="cell-h"><h3 data-m="movs_h">Movimientos</h3><span class="jp">取引</span></div>
+              <div class="movs" id="movs"></div>
+              <div class="foot"><span>LA CATEGORÍA QUE ELIGES SE RECUERDA PARA TODO EL COMERCIO</span><span id="movs-n"></span></div>
+            </div>
+            <div class="cell c-5">
+              <div class="cell-h"><h3>Suscripciones y recurrentes</h3><span class="jp">定期購読</span></div>
+              <table class="subs" id="subs"></table>
+              <div class="cell-h sub-h"><h3>Próximos cobros · 30 días</h3><span class="jp">予定</span></div>
+              <div class="rows" id="proximos"></div>
+            </div>
+          </div>
         </section>
 
         <!-- REDES Y CÓDIGO -->
@@ -187,7 +221,19 @@ const tabs = [
                   <button class="btn danger" type="button" id="gm-off" hidden>Desconectar</button>
                 </div>
               </div>
-              <div class="conn"><div><h4>Revolut</h4><div class="state">Fase 2</div></div><p>CSV primero, Open Banking después.</p><div></div></div>
+              <div class="conn">
+                <div><h4>Revolut</h4><div class="state" id="rv-state">Sin extracto</div></div>
+                <div>
+                  <p>LIFE no se conecta a Revolut: le das el extracto y lo lee una vez. En la app de Revolut abre la cuenta →
+                    <b>Extracto</b> → formato <b>Excel (CSV)</b>, elige el periodo (la primera vez, desde el principio) y guárdalo en el ordenador.
+                    Puedes importar extractos que se solapan: no se duplica nada. Open Banking, más adelante.</p>
+                  <div class="msg" data-import-msg role="status"></div>
+                </div>
+                <div class="actions">
+                  <button class="btn solid" type="button" data-import>Importar CSV</button>
+                  <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
+                </div>
+              </div>
               <div class="conn"><div><h4>Instagram · YouTube</h4><div class="state">Fase 3</div></div><p>Métricas de cuenta y de publicaciones.</p><div></div></div>
             </div>
             <div class="cell c-4">

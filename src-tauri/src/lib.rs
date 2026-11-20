@@ -1,6 +1,7 @@
 mod db;
 mod github;
 mod gmail;
+mod revolut;
 mod secrets;
 
 use db::Db;
@@ -323,6 +324,97 @@ fn encargo_abrir(app: AppHandle, id: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+// ── Dinero · Revolut ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct DineroView {
+    movimientos: Vec<revolut::Mov>,
+    /// Categorías que elegiste a mano, por comercio.
+    categorias: std::collections::HashMap<String, String>,
+    importado: Option<String>,
+    archivo: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Importe {
+    nuevos: usize,
+    actualizados: usize,
+    ignorados: usize,
+    leidos: usize,
+    vista: DineroView,
+}
+
+fn dinero_view(conn: &rusqlite::Connection) -> Result<DineroView, String> {
+    let e = |e: rusqlite::Error| e.to_string();
+    Ok(DineroView {
+        movimientos: db::movs(conn).map_err(e)?,
+        categorias: db::categorias(conn).map_err(e)?,
+        importado: db::ajuste(conn, "revolut_importado").map_err(e)?,
+        archivo: db::ajuste(conn, "revolut_archivo").map_err(e)?,
+    })
+}
+
+#[tauri::command]
+fn dinero_status(app: AppHandle) -> Result<DineroView, String> {
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    dinero_view(&conn)
+}
+
+/// Pide el CSV del extracto de Revolut, lo lee y guarda los movimientos. `None` si cancelas.
+#[tauri::command]
+async fn dinero_importar(app: AppHandle) -> Result<Option<Importe>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let a = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut d = a.dialog().file().set_title("Extracto de Revolut (CSV)").add_filter("CSV", &["csv"]);
+        if let Some(w) = a.get_webview_window("main") {
+            d = d.set_parent(&w);
+        }
+        d.blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = picked else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("No se pudo leer el archivo: {e}"))?;
+    let parsed = revolut::parse(&String::from_utf8_lossy(&bytes))?;
+
+    let state = app.state::<Db>();
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let now = gmail::utc(chrono::Utc::now());
+    let (nuevos, actualizados) = db::upsert_movs(&mut conn, &parsed.movs, &now).map_err(|e| e.to_string())?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    db::set_ajuste(&conn, "revolut_importado", &now).map_err(|e| e.to_string())?;
+    db::set_ajuste(&conn, "revolut_archivo", &name).map_err(|e| e.to_string())?;
+    db::log_sync(&conn, "revolut", true, Some(&format!("{name}: {nuevos} nuevos, {actualizados} actualizados")));
+    Ok(Some(Importe {
+        nuevos,
+        actualizados,
+        ignorados: parsed.ignorados,
+        leidos: parsed.movs.len(),
+        vista: dinero_view(&conn)?,
+    }))
+}
+
+#[tauri::command]
+fn dinero_categoria(app: AppHandle, comercio: String, categoria: String) -> Result<DineroView, String> {
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::set_categoria(&conn, &comercio, categoria.trim()).map_err(|e| e.to_string())?;
+    dinero_view(&conn)
+}
+
+/// Borra los movimientos importados (las categorías elegidas se conservan).
+#[tauri::command]
+fn dinero_borrar(app: AppHandle) -> Result<DineroView, String> {
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::borrar_movs(&conn).map_err(|e| e.to_string())?;
+    let _ = conn.execute("DELETE FROM ajustes WHERE clave IN ('revolut_importado', 'revolut_archivo')", []);
+    dinero_view(&conn)
+}
+
 async fn sync_all(app: &AppHandle, github_too: bool) {
     if matches!(secrets::get(gmail::PASS), Ok(Some(_))) {
         if let Err(e) = sync_gmail(app).await {
@@ -343,6 +435,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--bandeja"]),
@@ -421,7 +514,11 @@ pub fn run() {
             gmail_sync,
             gmail_disconnect,
             encargo_estado,
-            encargo_abrir
+            encargo_abrir,
+            dinero_status,
+            dinero_importar,
+            dinero_categoria,
+            dinero_borrar
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");
