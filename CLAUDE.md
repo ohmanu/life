@@ -35,7 +35,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram y YouTube, hecha) · 4 Parte del día y radar (Claude) · 5 Extras.
+0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram hecha; YouTube montado pero oculto: `YOUTUBE = false` en `app.ts`) · 4 Parte del día y radar (Claude) · 5 Extras.
 
 ## Notas
 

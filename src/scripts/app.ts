@@ -25,6 +25,12 @@ const NOMBRE_ESTADO: Record<string, string> = {
 const LIMITE_H = 48;
 
 const TAURI = "__TAURI_INTERNALS__" in window;
+/** YouTube está montado pero oculto hasta que se conecte. Para volver a mostrarlo: true. */
+const YOUTUBE = false;
+if (!YOUTUBE) {
+  document.querySelectorAll<HTMLElement>("[data-youtube]").forEach(n => n.remove());
+  document.getElementById("ig-posts-cell")?.classList.replace("c-8", "c-12");
+}
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const css = getComputedStyle(document.documentElement);
@@ -226,29 +232,41 @@ function briefEncargos(lines: string[]) {
   if (g.encargos.length) lines.push(`<b>${mes.length}</b> encargo${mes.length === 1 ? "" : "s"} este mes · <b>${abiertos}</b> abierto${abiertos === 1 ? "" : "s"} en el tablero.`);
 }
 
-function brief() {
-  const gh = ghState.snapshot, connected = ghState.connected;
-  const lines: string[] = [];
-  briefEncargos(lines);
-  if (gh) {
-    const last = gh.repos[0];
-    lines.push(`Racha en GitHub: <b>${gh.streak} ${gh.streak === 1 ? "día" : "días"}</b>.${last ? ` Último push en <b>${last.name}</b> ${rel(last.pushed_at)}.` : ""}`);
-    lines.push(`<b>${fmt(gh.last_90)}</b> contribuciones en 90 días; <b>${fmt(gh.total_year)}</b> en el último año.`);
-    lines.push(gh.open_prs || gh.open_issues
-      ? `Tienes <span class="hot">${gh.open_prs} PR${gh.open_prs === 1 ? "" : "s"} y ${gh.open_issues} issue${gh.open_issues === 1 ? "" : "s"}</span> abiertos.`
-      : "Sin PRs ni issues abiertos.");
-    const dormant = gh.repos.filter(r => daysAgo(r.pushed_at) > 21).slice(0, 2);
-    if (dormant.length) lines.push(dormant.map(r => `<b>${r.name}</b> lleva <span class="hot">${daysAgo(r.pushed_at)} días</span> sin tocarse`).join(" · ") + ".");
-  } else {
-    lines.push(connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
+function briefGitHub(lines: string[]) {
+  const gh = ghState.snapshot;
+  if (!gh) {
+    lines.push(ghState.connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
+    return;
   }
-  briefInstagram(lines);
-  briefYouTube(lines);
-  briefDinero(lines);
-  const ul = $("brief");
-  ul.innerHTML = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
-  const last = [gh?.synced_at, gmState.synced_at].filter(Boolean).sort().pop();
-  $("brief-time").textContent = last ? `ACTUALIZADO ${stamp(last)}` : "";
+  const last = gh.repos[0];
+  lines.push(`GitHub: racha de <b>${gh.streak} ${gh.streak === 1 ? "día" : "días"}</b> y <b>${fmt(gh.last_90)}</b> contribuciones en 90 días.`
+    + (last ? ` Último push en <b>${last.name}</b> ${rel(last.pushed_at)}.` : ""));
+  const extra: string[] = [];
+  if (gh.open_prs || gh.open_issues) extra.push(`<span class="hot">${gh.open_prs} PR${gh.open_prs === 1 ? "" : "s"} y ${gh.open_issues} issue${gh.open_issues === 1 ? "" : "s"}</span> abiertos`);
+  const dormant = gh.repos.filter(r => daysAgo(r.pushed_at) > 21).slice(0, 2);
+  if (dormant.length) extra.push(dormant.map(r => `<b>${r.name}</b> lleva <span class="hot">${daysAgo(r.pushed_at)} días</span> sin tocarse`).join(" · "));
+  if (extra.length) lines.push(extra.join(" · ") + ".");
+}
+
+/** El parte se pinta una vez por vuelta y solo si cambia (si no, la animación de escritura se reinicia). */
+let briefPendiente = false;
+let briefHtml = "";
+function brief() {
+  if (briefPendiente) return;
+  briefPendiente = true;
+  queueMicrotask(() => {
+    briefPendiente = false;
+    const lines: string[] = [];
+    briefEncargos(lines);
+    briefDinero(lines);
+    briefInstagram(lines);
+    if (YOUTUBE) briefYouTube(lines);
+    briefGitHub(lines);
+    const html = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
+    if (html !== briefHtml) { $("brief").innerHTML = html; briefHtml = html; }
+    const last = [ghState.snapshot?.synced_at, gmState.synced_at, igState.snapshot?.synced_at, rvState.banco?.sincronizado].filter(Boolean).sort().pop();
+    $("brief-time").textContent = last ? `ACTUALIZADO ${stamp(last!)}` : "";
+  });
 }
 
 function render(st: Status<GitHub>) {
@@ -688,7 +706,7 @@ function briefYouTube(lines: string[]) {
     + (yt.views_28 !== null ? ` · <b>${fmt(yt.views_28)}</b> vistas y <b>${fmt((yt.minutes_28 ?? 0) / 60)}</b> h vistas en 28 días.` : "."));
 }
 
-$("yt-videos").addEventListener("click", async e => {
+$("yt-videos")?.addEventListener("click", async e => {
   const a = (e.target as HTMLElement).closest<HTMLElement>("[data-yt]");
   if (!a) return;
   e.preventDefault();
@@ -703,18 +721,18 @@ async function ytAccion(btn: HTMLButtonElement, aviso: string, fn: () => Promise
   catch (err) { ytMsg(String(err), "err"); }
   finally { btn.disabled = false; }
 }
-$("yt-form").addEventListener("submit", e => {
+$("yt-form")?.addEventListener("submit", e => {
   e.preventDefault();
   const id = $<HTMLInputElement>("yt-id"), secret = $<HTMLInputElement>("yt-secret");
   ytAccion($<HTMLButtonElement>("yt-save"), "Guardando…", () => invoke<YtView>("youtube_configurar", { clientId: id.value, secret: secret.value }),
     () => { id.value = ""; secret.value = ""; return "Cliente guardado en las credenciales de Windows. Ahora pulsa Conectar con YouTube."; });
 });
-$("yt-connect").addEventListener("click", () =>
+$("yt-connect")?.addEventListener("click", () =>
   ytAccion($<HTMLButtonElement>("yt-connect"), "Da permiso en el navegador que se ha abierto (Google avisará de que la app no está verificada: es la tuya)…",
     () => invoke<YtView>("youtube_conectar"), v => `Conectado${v.snapshot ? ` · ${v.snapshot.channel}` : ""}.`));
-$("yt-sync-btn").addEventListener("click", () =>
+$("yt-sync-btn")?.addEventListener("click", () =>
   ytAccion($<HTMLButtonElement>("yt-sync-btn"), "Leyendo YouTube…", () => invoke<YtView>("youtube_sync"), () => "Sincronizado."));
-$("yt-off").addEventListener("click", () => {
+$("yt-off")?.addEventListener("click", () => {
   const todo = !ytState.connected;
   ytAccion($<HTMLButtonElement>("yt-off"), "", () => invoke<YtView>("youtube_disconnect", { todo }),
     () => todo ? "ID y secreto del cliente borrados." : "Permiso quitado de LIFE. Para revocarlo también en Google: myaccount.google.com/permissions.");
@@ -1086,7 +1104,7 @@ function subs(list: Sub[]) {
 
 function briefDinero(lines: string[]) {
   const list = rvState.movimientos;
-  if (!list.length) { lines.push(`<span class="off">Dinero: importa el CSV de Revolut en <b>F3</b>.</span>`); return; }
+  if (!list.length) { lines.push(`<span class="off">Dinero: conecta Revolut en <b>F5 · Conexiones</b>.</span>`); return; }
   const meses = porMes(list);
   const k = mesKey(new Date());
   const m = meses.get(k);
@@ -1171,7 +1189,11 @@ function renderDinero(d: Dinero) {
   movs(list);
   subs(subsCache);
 
-  const info = has ? `EXTRACTO ${d.importado ? stamp(d.importado) : ""} · ${fmt(list.length)} MOVIMIENTOS · ${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "SIN EXTRACTO · IMPORTA EL CSV DE REVOLUT";
+  const rango = has ? `${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "";
+  const origen = d.banco?.conectado
+    ? `BANCO${d.banco.sincronizado ? ` · LEÍDO ${stamp(d.banco.sincronizado)}` : ""}`
+    : `EXTRACTO${d.importado ? ` ${stamp(d.importado)}` : ""}`;
+  const info = has ? `${origen} · ${fmt(list.length)} MOVIMIENTOS · ${rango}` : "SIN DATOS · CONECTA REVOLUT EN F5 O IMPORTA EL CSV";
   $("rv-info").textContent = info;
   const b = d.banco ?? SIN_BANCO;
   const dias = b.valido_hasta ? Math.floor((new Date(b.valido_hasta).getTime() - Date.now()) / DIA) : null;
@@ -1441,9 +1463,11 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); renderYouTube(demoYouTube()); render(demo()); return; }
-  try { renderYouTube(await invoke<YtView>("youtube_status")); }
-  catch (e) { ytMsg(String(e), "err"); }
+  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); return; }
+  if (YOUTUBE) {
+    try { renderYouTube(await invoke<YtView>("youtube_status")); }
+    catch (e) { ytMsg(String(e), "err"); }
+  }
   try { renderInstagram(await invoke<Status<Instagram>>("instagram_status")); }
   catch (e) { igMsg(String(e), "err"); }
   try { renderDinero(await invoke<Dinero>("dinero_status")); }
@@ -1520,7 +1544,7 @@ if (TAURI) {
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
   listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
   listen<Dinero>("dinero-updated", e => renderDinero(e.payload));
-  listen<YtView>("youtube-updated", e => renderYouTube(e.payload));
+  if (YOUTUBE) listen<YtView>("youtube-updated", e => renderYouTube(e.payload));
   listen<Instagram>("instagram-updated", e => renderInstagram({ connected: true, snapshot: e.payload }));
   // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
   setInterval(() => renderGmail(gmState), 5 * 60 * 1000);

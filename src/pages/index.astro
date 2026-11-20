@@ -40,7 +40,7 @@ const tabs = [
           <span class="src" id="src-gmail"><i></i>Gmail</span>
           <span class="src" id="src-revolut"><i></i>Revolut</span>
           <span class="src" id="src-instagram"><i></i>Instagram</span>
-          <span class="src" id="src-youtube"><i></i>YouTube</span>
+          <span class="src" id="src-youtube" data-youtube><i></i>YouTube</span>
         </span>
         <button class="btn" id="privacy" type="button" aria-pressed="false" title="Tecla P">Ocultar cifras</button>
       </div>
@@ -68,11 +68,12 @@ const tabs = [
               <div class="foot"><span>SIN SEÑAL · AUTOEVALUACIÓN EN LA FASE 4</span><span>6 EJES</span></div>
             </div>
             <div class="cell c-12">
-              <div class="kpis">
+              <div class="kpis five">
                 <div class="kpi"><div class="k">Encargos sin responder</div><div class="v" data-e="sin">—</div><div class="d" data-e="sin_d"></div></div>
-                <div class="kpi"><div class="k">Encargos abiertos</div><div class="v" data-e="abiertos">—</div><div class="d" data-e="abiertos_d"></div></div>
+                <div class="kpi"><div class="k">Patrimonio</div><div class="v money" data-m="saldo">—</div><div class="d money" data-m="saldo_d"></div></div>
+                <div class="kpi"><div class="k" data-m="gas_k">Gastos</div><div class="v money" data-m="gas">—</div><div class="d money" data-m="gas_d"></div></div>
+                <div class="kpi"><div class="k">Seguidores Instagram</div><div class="v" data-i="seg">—</div><div class="d" data-i="seg_d"></div></div>
                 <div class="kpi"><div class="k">Racha GitHub</div><div class="v" data-k="streak">—</div><div class="d" data-k="longest"></div></div>
-                <div class="kpi"><div class="k">Contribuciones · 90 d</div><div class="v" data-k="last_90">—</div><div class="d" data-k="total_year"></div></div>
               </div>
             </div>
             <div class="cell c-12">
@@ -128,8 +129,7 @@ const tabs = [
               <div class="msg" data-import-msg role="status"></div>
             </div>
             <div class="cell c-12">
-              <div class="kpis five">
-                <div class="kpi"><div class="k">Patrimonio</div><div class="v money" data-m="saldo">—</div><div class="d money" data-m="saldo_d"></div></div>
+              <div class="kpis">
                 <div class="kpi"><div class="k" data-m="ing_k">Ingresos</div><div class="v money" data-m="ing">—</div><div class="d money" data-m="ing_d"></div></div>
                 <div class="kpi"><div class="k" data-m="gas_k">Gastos</div><div class="v money" data-m="gas">—</div><div class="d money" data-m="gas_d"></div></div>
                 <div class="kpi"><div class="k">Tasa de ahorro</div><div class="v" data-m="tasa">—</div><div class="d" data-m="tasa_d"></div></div>
@@ -193,12 +193,12 @@ const tabs = [
               <div class="horas" id="ig-horas"></div>
               <div class="foot"><span id="ig-sync">SIN CONECTAR</span><span>CADA HORA · SOLO LECTURA</span></div>
             </div>
-            <div class="cell c-8">
+            <div class="cell c-8" id="ig-posts-cell">
               <div class="cell-h"><h3>Publicaciones</h3><span class="jp">投稿</span></div>
               <div class="posts" id="ig-posts"></div>
               <div class="foot"><span>ESTADÍSTICAS DE LAS 24 MÁS RECIENTES · META LAS DA CON HASTA 48 H DE RETRASO</span><span id="ig-posts-n"></span></div>
             </div>
-            <div class="cell c-4">
+            <div class="cell c-4" data-youtube>
               <div class="cell-h"><h3 id="yt-h">YouTube</h3><span class="jp">動画</span></div>
               <div class="kpis two">
                 <div class="kpi"><div class="k">Suscriptores</div><div class="v" data-y="subs">—</div><div class="d" data-y="subs_d"></div></div>
@@ -279,12 +279,13 @@ const tabs = [
                   <div class="msg" id="rv-bank-msg" role="status"></div>
                   <h5 class="conn-sub">Extracto en CSV</h5>
                   <p>En la app de Revolut: la cuenta → <b>Extracto</b> → <b>Excel (CSV)</b>, o el <b>Resumen del ejercicio</b>. Sirve para el histórico que el banco no da por Open Banking; lo que llega del banco manda sobre el CSV del mismo periodo.</p>
+                  <div class="field">
+                    <button class="btn" type="button" data-import>Importar CSV</button>
+                    <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
+                  </div>
                   <div class="msg" data-import-msg role="status"></div>
                 </div>
-                <div class="actions">
-                  <button class="btn" type="button" data-import>Importar CSV</button>
-                  <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
-                </div>
+                <div></div>
               </div>
               <div class="conn">
                 <div><h4>Instagram</h4><div class="state" id="ig-state">Sin conectar</div></div>
@@ -309,7 +310,7 @@ const tabs = [
                   <button class="btn danger" type="button" id="ig-off" hidden>Desconectar</button>
                 </div>
               </div>
-              <div class="conn">
+              <div class="conn" data-youtube>
                 <div><h4>YouTube</h4><div class="state" id="yt-state">Sin conectar</div></div>
                 <div>
                   <div id="yt-help">
@@ -341,7 +342,8 @@ const tabs = [
                 <label class="row switch" for="autostart"><span>Abrir LIFE al iniciar Windows</span><input type="checkbox" id="autostart" /></label>
                 <div class="row"><span>Al cerrar la ventana</span><span>se queda en la bandeja</span></div>
                 <div class="row"><span>Datos</span><span>life.db cifrada en tu equipo</span></div>
-                <div class="row"><span>Avisos</span><span>encargo nuevo · 48 h sin respuesta</span></div>
+                <div class="row"><span>Avisos</span><span>encargos nuevos · 48 h · banco</span></div>
+                <div class="row"><span>Lectura</span><span>Gmail 10 min · redes 1 h · banco 6 h</span></div>
                 <div class="row"><span>Claves</span><span>Credenciales de Windows</span></div>
                 <div class="row"><span>Ocultar cifras</span><span>tecla P</span></div>
               </div>
