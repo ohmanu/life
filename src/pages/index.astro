@@ -1,0 +1,179 @@
+---
+import "../styles/console.css";
+
+const tabs = [
+  { id: "hoy", key: "F1", label: "Hoy" },
+  { id: "encargos", key: "F2", label: "Encargos" },
+  { id: "dinero", key: "F3", label: "Dinero" },
+  { id: "redes", key: "F4", label: "Redes y código" },
+  { id: "conexiones", key: "F5", label: "Conexiones" },
+];
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LIFE</title>
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header>
+        <div class="titlebar">
+          <div class="drag" data-tauri-drag-region>
+            <span data-tauri-drag-region>LIFE — <span class="jp" data-tauri-drag-region>生活記録</span></span>
+          </div>
+          <div class="win">
+            <button type="button" id="w-min" aria-label="Minimizar">–</button>
+            <button type="button" id="w-max" aria-label="Maximizar">□</button>
+            <button type="button" id="w-close" class="close" aria-label="Esconder en la bandeja">×</button>
+          </div>
+        </div>
+        <div id="demo" class="demo-banner" hidden>MODO DEMO · DATOS DE EJEMPLO · ABRE LIFE COMO APP PARA VER LOS TUYOS</div>
+      </header>
+
+      <div class="statusbar" data-tauri-drag-region>
+        <span class="logo"><span class="mark">生</span>LIFE<span class="slash">/</span><span class="cur" aria-hidden="true"></span></span>
+        <span class="clock"><span class="signal" aria-hidden="true"><b></b><b></b><b></b><b></b></span><span id="clock">—</span></span>
+        <span class="sources">
+          <span class="src" id="src-github"><i></i>GitHub</span>
+          <span class="src"><i></i>Gmail · fase 1</span>
+          <span class="src"><i></i>Revolut · fase 2</span>
+          <span class="src"><i></i>Instagram · fase 3</span>
+          <span class="src"><i></i>YouTube · fase 3</span>
+        </span>
+        <button class="btn" id="privacy" type="button" aria-pressed="false" title="Tecla P">Ocultar cifras</button>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="Vistas">
+        {tabs.map((t, i) => (
+          <button role="tab" id={`tab-${t.id}`} aria-controls={`v-${t.id}`} aria-selected={i === 0 ? "true" : "false"} data-key={t.key}>
+            <span class="fkey">{t.key}</span>{t.label}
+          </button>
+        ))}
+      </nav>
+
+      <main class="main">
+        <!-- HOY -->
+        <section class="view" id="v-hoy" role="tabpanel" aria-labelledby="tab-hoy">
+          <div class="grid">
+            <div class="cell c-7">
+              <div class="cell-h"><h3>Parte del día</h3><span class="jp">本日の報告</span></div>
+              <div class="frame" data-ch="CH 140.85"><ul class="brief" id="brief"></ul></div>
+              <div class="foot"><span>GENERADO EN LOCAL · CLAUDE EN LA FASE 4</span><span id="brief-time"></span></div>
+            </div>
+            <div class="cell c-5">
+              <div class="cell-h"><h3>Radar de vida</h3><span class="jp">生活レーダー</span></div>
+              <div class="radar"><svg id="radar" viewBox="0 0 300 300" role="img" aria-label="Radar de vida sin datos todavía"></svg></div>
+              <div class="foot"><span>SIN SEÑAL · AUTOEVALUACIÓN EN LA FASE 4</span><span>6 EJES</span></div>
+            </div>
+            <div class="cell c-12">
+              <div class="kpis">
+                <div class="kpi"><div class="k">Racha GitHub</div><div class="v" data-k="streak">—</div><div class="d" data-k="longest"></div></div>
+                <div class="kpi"><div class="k">Contribuciones · 90 d</div><div class="v" data-k="last_90">—</div><div class="d" data-k="total_year"></div></div>
+                <div class="kpi"><div class="k">PRs abiertos</div><div class="v" data-k="open_prs">—</div><div class="d">tuyos, en cualquier repo</div></div>
+                <div class="kpi"><div class="k">Issues abiertos</div><div class="v" data-k="open_issues">—</div><div class="d">creados por ti</div></div>
+              </div>
+            </div>
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Contribuciones · 52 semanas</h3><span class="jp">貢献</span></div>
+              <div class="heat-wrap"><svg class="heat-svg" id="heat" viewBox="0 0 776 120" style="min-width:640px" role="img" aria-label="Mapa de contribuciones de GitHub del último año"></svg></div>
+              <div class="foot"><span id="heat-sync">SIN SINCRONIZAR</span><span>CADA HORA</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ENCARGOS -->
+        <section class="view" id="v-encargos" role="tabpanel" aria-labelledby="tab-encargos" hidden>
+          <div class="grid"><div class="cell c-12 pending">
+            <span class="tag">FASE 1 · GMAIL · SOLO LECTURA</span>
+            <h2>Encargos de glutamatocult.com</h2>
+            <p>LIFE leerá los correos de la hoja de encargo (de web@glutamatocult.com, asunto «Encargo · …») y los convertirá en fichas.</p>
+            <ul>
+              <li>Tablero Nuevo → Respondido → Presupuesto → Confirmado → Cobrado</li>
+              <li>«Respondido» cuando el hilo tenga un correo tuyo</li>
+              <li>Aviso de Windows si un encargo pasa de 48 h sin respuesta</li>
+            </ul>
+          </div></div>
+        </section>
+
+        <!-- DINERO -->
+        <section class="view" id="v-dinero" role="tabpanel" aria-labelledby="tab-dinero" hidden>
+          <div class="grid"><div class="cell c-12 pending">
+            <span class="tag">FASE 2 · REVOLUT</span>
+            <h2>Dinero</h2>
+            <p>Primero con el CSV que exporta la app de Revolut; después con Open Banking para que se actualice solo.</p>
+            <ul>
+              <li>Ingresos, gastos, tasa de ahorro y colchón</li>
+              <li>Categorías que corriges una vez por comercio</li>
+              <li>Suscripciones, subidas de precio y próximos cobros</li>
+            </ul>
+          </div></div>
+        </section>
+
+        <!-- REDES Y CÓDIGO -->
+        <section class="view" id="v-redes" role="tabpanel" aria-labelledby="tab-redes" hidden>
+          <div class="grid">
+            <div class="cell c-4 wide">
+              <div class="cell-h"><h3>GitHub</h3><span class="jp">コード</span></div>
+              <div class="kpi"><div class="v" data-k="streak">—</div><div class="sub" data-k="login"></div></div>
+              <div class="rows" id="repos" style="margin-top:12px"></div>
+            </div>
+            <div class="cell c-4 pending">
+              <span class="tag">FASE 3</span>
+              <h2>Instagram</h2>
+              <p>Seguidores, alcance y mejor hora para publicar. Necesita cuenta profesional.</p>
+            </div>
+            <div class="cell c-4 pending">
+              <span class="tag">FASE 3</span>
+              <h2>YouTube</h2>
+              <p>Suscriptores, horas vistas y retención.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- CONEXIONES -->
+        <section class="view" id="v-conexiones" role="tabpanel" aria-labelledby="tab-conexiones" hidden>
+          <div class="grid">
+            <div class="cell c-8">
+              <div class="cell-h"><h3>Conexiones</h3><span class="jp">接続設定</span></div>
+              <div class="conn">
+                <div><h4>GitHub</h4><div class="state" id="gh-state">Sin conectar</div></div>
+                <div>
+                  <p id="gh-help">Crea un token de acceso detallado de solo lectura en
+                    <span class="copy">github.com/settings/personal-access-tokens/new</span>
+                    (permisos de repositorio: Metadata y Contents en lectura) y pégalo aquí. Se guarda en el Administrador de credenciales de Windows.</p>
+                  <form class="field" id="gh-form" autocomplete="off">
+                    <input id="gh-token" type="password" placeholder="github_pat_…" aria-label="Token de GitHub" spellcheck="false" />
+                    <button class="btn solid" type="submit" id="gh-connect">Conectar</button>
+                  </form>
+                  <div class="msg" id="gh-msg" role="status"></div>
+                </div>
+                <div class="actions">
+                  <button class="btn" type="button" id="gh-sync" hidden>Sincronizar</button>
+                  <button class="btn danger" type="button" id="gh-off" hidden>Desconectar</button>
+                </div>
+              </div>
+              <div class="conn"><div><h4>Gmail</h4><div class="state">Fase 1</div></div><p>Solo lectura de los correos de encargo.</p><div></div></div>
+              <div class="conn"><div><h4>Revolut</h4><div class="state">Fase 2</div></div><p>CSV primero, Open Banking después.</p><div></div></div>
+              <div class="conn"><div><h4>Instagram · YouTube</h4><div class="state">Fase 3</div></div><p>Métricas de cuenta y de publicaciones.</p><div></div></div>
+            </div>
+            <div class="cell c-4">
+              <div class="cell-h"><h3>Sistema</h3><span class="jp">システム</span></div>
+              <div class="rows">
+                <label class="row switch" for="autostart"><span>Abrir LIFE al iniciar Windows</span><input type="checkbox" id="autostart" /></label>
+                <div class="row"><span>Al cerrar la ventana</span><span>se queda en la bandeja</span></div>
+                <div class="row"><span>Datos</span><span>life.db en tu equipo</span></div>
+                <div class="row"><span>Claves</span><span>Credenciales de Windows</span></div>
+                <div class="row"><span>Ocultar cifras</span><span>tecla P</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      import "../scripts/app.ts";
+    </script>
+  </body>
+</html>

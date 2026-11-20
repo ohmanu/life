@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="120" fill="#03110f"/>
+  <rect x="64" y="64" width="896" height="896" rx="70" fill="none" stroke="#1b5a50" stroke-width="16"/>
+  <g fill="#38f2c4">
+    <!-- L -->
+    <rect x="232" y="250" width="110" height="520"/>
+    <rect x="232" y="660" width="300" height="110"/>
+    <!-- / -->
+    <polygon points="610,250 710,250 560,770 460,770"/>
+    <!-- cursor -->
+    <rect x="740" y="660" width="70" height="110"/>
+  </g>
+  <g fill="none" stroke="#38f2c4" stroke-width="14" opacity=".6">
+    <path d="M120 200V120H200"/><path d="M904 824V904H824"/>
+  </g>
+</svg>

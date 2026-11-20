@@ -1,0 +1,1344 @@
+<title>LIFE · Panel de vida v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;700&family=Yuji+Boku&display=swap">
+<style>
+/* Layout: páginas de artbook apiladas. Cada sección abre con la banda negra + franja gris
+   y cierra con un folio. El panel es un pliego a sangre dentro del papel.
+   Un solo tema claro a propósito: es papel impreso. El rojo de radio solo vive dentro de los bloques "HUD". */
+:root {
+  color-scheme: light;
+  --paper: #f4f5f6;
+  --paper-2: #ffffff;
+  --ink: #131316;
+  --ink-2: #44454c;
+  --grey: #8e909b;
+  --band: #c4c6cf;
+  --band-2: #e3e4ea;
+  --rule: #d2d4db;
+  --red: #c5161d;
+  --hud-bg: #03110f;
+  --hud-bg-2: #082019;
+  --hud: #38f2c4;
+  --hud-2: #a3eedb;
+  --hud-dim: #1b5a50;
+  --hud-hi: #e4fff7;
+  --hud-alert: #ff5a4a;
+  --glow: 0 0 6px rgba(56, 242, 196, .55);
+  --ok: #2c6a46;
+  --warn: #a8670f;
+  --crit: var(--red);
+
+  --f-ui: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --f-jp: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --f-brush: "Yuji Boku", "Noto Serif JP", serif;
+
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-ui);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3, h4 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.num { font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+.example-tag {
+  display: inline-block; font-family: var(--f-data); font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--red); border: 1px solid var(--red); padding: 1px 6px;
+}
+
+/* ---------- banda de sección (cabecera de artbook) ---------- */
+.band { margin-top: var(--s8); }
+.band::before { content: ""; display: block; height: 7px; border-top: 1px solid var(--band); border-bottom: 1px solid var(--band); }
+.band-top {
+  background: var(--ink); color: var(--paper-2);
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--s4);
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+  margin-top: 5px;
+}
+.band-top h2 { font-size: clamp(17px, 2.2vw, 22px); font-weight: 700; font-stretch: 92%; letter-spacing: -.005em; }
+.band-top .code { font-family: var(--f-data); font-size: 11px; color: var(--band); letter-spacing: .1em; white-space: nowrap; }
+.band-sub {
+  background: var(--band); color: var(--paper-2); text-align: right;
+  font-family: var(--f-jp); font-size: 12px; letter-spacing: .3em;
+  padding: 3px max(16px, env(safe-area-inset-right, 0px)) 3px max(16px, env(safe-area-inset-left, 0px));
+  margin-top: 4px;
+}
+.band-sub::after { content: ""; display: block; }
+.folio {
+  margin-top: var(--s7); display: flex; justify-content: space-between; align-items: center; gap: var(--s4);
+  background: var(--band-2); padding: 3px max(16px, env(safe-area-inset-right, 0px)) 3px max(16px, env(safe-area-inset-left, 0px));
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2);
+}
+.folio b { font-weight: 700; color: var(--ink); }
+.section-body { padding-top: var(--s6); }
+.lede { font-size: 18px; line-height: 1.5; max-width: 62ch; color: var(--ink); }
+.spaced {
+  font-family: var(--f-ui); font-weight: 300; letter-spacing: .6em; text-transform: none;
+  color: var(--grey); font-size: 15px;
+}
+
+/* ---------- portada ---------- */
+.cover { padding-block: var(--s7) 0; }
+.cover-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: var(--s6); align-items: center; }
+.ink-block {
+  position: relative; aspect-ratio: 4 / 5; max-width: 100%;
+  display: grid; place-items: center; overflow: hidden;
+}
+.ink-block canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ink-block .kanji {
+  position: relative; font-family: var(--f-brush); font-size: clamp(170px, 28vw, 330px); line-height: 1;
+  color: var(--paper-2); transform: translateY(-4%);
+}
+.ink-block .stamp {
+  position: absolute; right: 9%; bottom: 9%; width: 58px; height: 58px; border: 3px solid var(--red);
+  color: var(--red); font-family: var(--f-jp); font-weight: 700; font-size: 15px; line-height: 1.05;
+  display: grid; place-items: center; text-align: center; transform: rotate(-4deg); background: var(--paper);
+}
+.ink-block .sign { position: absolute; left: 8%; bottom: 7%; font-family: var(--f-brush); color: var(--ink); font-size: 22px; }
+.logo-plate {
+  display: inline-block; position: relative; overflow: hidden; max-width: 100%;
+  background: var(--hud-bg); border: 1px solid var(--hud-dim); box-shadow: 0 0 0 4px var(--ink);
+  padding: .32em .42em; font-size: clamp(48px, 8.5vw, 104px);
+}
+.logo-plate::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .32) 0 1px, transparent 1px 3px);
+}
+.logo-plate .logo-hud .mark { border-width: 2px; }
+.cover-title .sub { margin-top: var(--s4); font-family: var(--f-jp); letter-spacing: .5em; color: var(--ink-2); font-size: 14px; }
+.cover-title .lede { margin-top: var(--s6); }
+.cover-meta { margin-top: var(--s6); display: grid; grid-template-columns: auto 1fr; gap: 6px var(--s5); font-size: 13px; }
+.cover-meta dt { font-family: var(--f-data); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); padding-top: 2px; }
+.cover-meta dd { margin: 0; }
+.cover-name { margin-top: var(--s6); }
+
+/* ---------- identidad ---------- */
+.traits { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s4); margin-top: var(--s6); }
+.trait { border-top: 2px solid var(--ink); padding-top: var(--s3); }
+.trait .t-k { font-family: var(--f-data); font-size: 11px; color: var(--red); letter-spacing: .08em; }
+.trait h3 { font-size: 16px; font-weight: 700; margin-top: 4px; }
+.trait p { font-size: 13.5px; color: var(--ink-2); margin-top: 6px; }
+.swatches { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 2px; margin-top: var(--s7); }
+.sw { min-height: 118px; padding: var(--s3); display: flex; flex-direction: column; justify-content: flex-end; font-size: 12px; }
+.sw b { font-weight: 700; display: block; }
+.sw span { font-family: var(--f-data); font-size: 10.5px; opacity: .8; }
+.type-specimen { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s5); margin-top: var(--s7); }
+.spec { border: 1px solid var(--rule); background: var(--paper-2); padding: var(--s4); min-width: 0; }
+.spec .role { font-family: var(--f-data); font-size: 10.5px; color: var(--grey); letter-spacing: .1em; text-transform: uppercase; }
+.spec .sample { margin-top: var(--s3); line-height: 1.1; overflow-wrap: anywhere; }
+.spec .use { margin-top: var(--s3); font-size: 12.5px; color: var(--ink-2); }
+.spec-hud { background: var(--hud-bg); border-color: var(--hud-dim); font-family: var(--f-data); }
+.spec-hud .role { color: var(--hud-dim); }
+.spec-hud .use { color: var(--hud-2); }
+.motion { margin-top: var(--s7); border-top: 2px solid var(--ink); padding-top: var(--s3); }
+.motion h3 { font-size: 16px; font-weight: 800; }
+.motion ul { list-style: none; margin: var(--s3) 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s4) var(--s5); }
+.motion li { font-size: 13px; color: var(--ink-2); }
+.motion b { display: block; font-family: var(--f-data); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--red); margin-bottom: 2px; }
+@media (max-width: 1020px) { .motion ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .motion ul { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- panel (prototipo): consola de radio ---------- */
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes sweep { to { transform: rotate(360deg); } }
+@keyframes scan { from { top: -140px; } to { top: 100%; } }
+@keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: 1; } 48% { opacity: .82; } 49% { opacity: 1; } 83% { opacity: .93; } 84% { opacity: 1; } }
+@keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes grow { from { transform: scaleY(0); } }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes pop { from { opacity: 0; } }
+@keyframes fillx { from { clip-path: inset(0 100% 0 0); } }
+@keyframes ping6 { 0% { transform: scale(1); opacity: .9; } 22% { transform: scale(4); opacity: 0; } 100% { transform: scale(4); opacity: 0; } }
+@keyframes ping { from { transform: scale(1); opacity: .9; } to { transform: scale(4); opacity: 0; } }
+@keyframes radarIn { from { transform: scale(0); opacity: 0; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes sig { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.35); } }
+@keyframes alarm { 0%, 100% { box-shadow: inset 3px 0 0 var(--hud-alert); } 50% { box-shadow: inset 3px 0 0 var(--hud-alert), 0 0 12px rgba(255, 90, 74, .55); border-color: var(--hud-alert); } }
+
+/* logo de consola */
+.logo-hud {
+  display: inline-flex; align-items: center; gap: .45em;
+  font-family: var(--f-data); font-weight: 600; color: var(--hud); text-shadow: var(--glow);
+  letter-spacing: .04em; line-height: 1;
+}
+.logo-hud .mark {
+  font-family: var(--f-jp); font-weight: 700; font-size: .72em; border: 1px solid var(--hud);
+  padding: .14em .22em; box-shadow: var(--glow), inset 0 0 6px rgba(56, 242, 196, .35); text-shadow: var(--glow);
+}
+.logo-hud .slash { color: var(--hud-2); }
+.logo-hud .cur { width: .55em; height: .95em; background: var(--hud); box-shadow: var(--glow); animation: blink 1.05s steps(1) infinite; }
+
+.deck {
+  position: relative; overflow: hidden; margin-top: var(--s5);
+  background: var(--hud-bg); color: var(--hud-2); border: 1px solid var(--hud-dim);
+  font-family: var(--f-data); font-size: 13px;
+  box-shadow: 0 0 0 4px var(--ink), 0 22px 44px rgba(19, 19, 22, .35);
+}
+.deck::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, .3) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, .45) 100%);
+  animation: flicker 7s infinite;
+}
+.deck::before {
+  content: ""; position: absolute; left: 0; right: 0; height: 140px; top: -140px; z-index: 5; pointer-events: none;
+  background: linear-gradient(transparent, rgba(56, 242, 196, .07), transparent);
+  animation: scan 8s linear infinite;
+}
+.deck ::selection { background: var(--hud); color: var(--hud-bg); }
+.deck .sub { font-size: 11.5px; color: var(--hud-2); }
+.deck p { color: var(--hud-2); }
+.glow { filter: drop-shadow(0 0 3px rgba(56, 242, 196, .75)); }
+
+.titlebar {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--s3);
+  background: var(--hud-bg-2); border-bottom: 1px solid var(--hud-dim); padding: 4px 0 4px var(--s3);
+  font-size: 11px; color: var(--hud-dim); letter-spacing: .14em;
+}
+.titlebar .win { display: flex; }
+.titlebar .win i { font-style: normal; width: 38px; text-align: center; font-size: 12px; color: var(--hud-dim); }
+
+.statusbar {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--s3) var(--s5);
+  padding: 10px var(--s4); border-bottom: 1px solid var(--hud-dim); font-size: 11.5px; color: var(--hud-2);
+}
+.statusbar .logo-hud { font-size: 19px; }
+.clock { display: inline-flex; align-items: center; gap: 10px; letter-spacing: .06em; }
+.signal { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; }
+.signal b { width: 3px; background: var(--hud); box-shadow: var(--glow); transform-origin: bottom; animation: sig 1.4s ease-in-out infinite; }
+.signal b:nth-child(1) { height: 4px; } .signal b:nth-child(2) { height: 7px; animation-delay: .15s; }
+.signal b:nth-child(3) { height: 10px; animation-delay: .3s; } .signal b:nth-child(4) { height: 12px; animation-delay: .45s; }
+.sources { display: flex; flex-wrap: wrap; gap: 4px var(--s4); }
+.src { display: inline-flex; align-items: center; gap: 6px; color: var(--hud-2); letter-spacing: .04em; }
+.src i { width: 6px; height: 6px; background: var(--hud); box-shadow: var(--glow); display: inline-block; animation: pulse 2.4s ease-in-out infinite; }
+.src:nth-child(2) i { animation-delay: .5s; } .src:nth-child(3) i { animation-delay: 1s; } .src:nth-child(4) i { animation-delay: 1.5s; }
+.src.warn i { background: var(--hud-alert); animation: blink 1s steps(1) infinite; }
+.src.warn em { font-style: normal; color: var(--hud-alert); }
+.privacy-btn {
+  font: inherit; letter-spacing: .1em; text-transform: uppercase; color: var(--hud); background: transparent;
+  border: 1px solid var(--hud-dim); padding: 4px 10px; cursor: pointer;
+}
+.privacy-btn:hover { border-color: var(--hud); box-shadow: var(--glow); }
+.privacy-btn[aria-pressed="true"] { background: var(--hud); border-color: var(--hud); color: var(--hud-bg); }
+.deck.private .money-val { filter: blur(6px); }
+
+.deck-tabs { display: flex; gap: 4px; padding: 10px var(--s4) 0; border-bottom: 1px solid var(--hud-dim); overflow-x: auto; }
+.deck-tabs button {
+  font: 500 12px var(--f-data); letter-spacing: .12em; text-transform: uppercase; padding: 6px 12px;
+  border: 1px solid var(--hud-dim); border-bottom: 0; background: transparent; color: var(--hud-dim);
+  cursor: pointer; white-space: nowrap;
+}
+.deck-tabs button .fkey { opacity: .65; margin-right: 6px; }
+.deck-tabs button:hover { color: var(--hud-2); border-color: var(--hud-2); }
+.deck-tabs button[aria-selected="true"] { background: var(--hud); border-color: var(--hud); color: var(--hud-bg); box-shadow: var(--glow); }
+
+.deck-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1px; background: var(--hud-dim); }
+.cell { background: var(--hud-bg); padding: var(--s4); min-width: 0; position: relative; }
+.cell::before {
+  content: ""; position: absolute; inset: 5px; pointer-events: none; opacity: .7;
+  background:
+    linear-gradient(var(--hud), var(--hud)) left top / 9px 1px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) left top / 1px 9px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) right bottom / 9px 1px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) right bottom / 1px 9px no-repeat;
+}
+.cell-h { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); margin-bottom: var(--s3); }
+.cell-h h3 { font: 600 12px var(--f-data); letter-spacing: .14em; text-transform: uppercase; color: var(--hud); text-shadow: var(--glow); }
+.cell-h .jp { font-family: var(--f-jp); font-size: 10.5px; color: var(--hud-dim); letter-spacing: .2em; white-space: nowrap; }
+.c-3 { grid-column: span 3; } .c-4 { grid-column: span 4; } .c-5 { grid-column: span 5; } .c-6 { grid-column: span 6; }
+.c-7 { grid-column: span 7; } .c-8 { grid-column: span 8; } .c-12 { grid-column: span 12; }
+
+/* parte del día */
+.hud-frame { border: 1px solid var(--hud-dim); padding: var(--s3); position: relative; }
+.hud-frame::before { content: "CH 140.85"; position: absolute; top: -8px; right: 10px; background: var(--hud-bg); color: var(--hud); font-size: 10px; padding: 0 6px; letter-spacing: .1em; }
+.brief { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.brief li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; line-height: 1.45; animation: type 1.1s steps(42) both; animation-delay: calc(var(--i, 0) * .5s + .2s); }
+.brief li::before { content: attr(data-k); color: var(--hud); font-weight: 600; }
+.brief::after { content: ""; display: block; width: .6em; height: 1.05em; margin-left: 28px; background: var(--hud); box-shadow: var(--glow); animation: blink 1.05s steps(1) infinite; }
+.brief b { color: var(--hud-hi); font-weight: 500; }
+.brief .hot { color: var(--hud); text-shadow: var(--glow); }
+.hud-foot { margin-top: var(--s3); display: flex; justify-content: space-between; gap: var(--s3); font-size: 10.5px; color: var(--hud-dim); flex-wrap: wrap; letter-spacing: .06em; }
+
+/* radar */
+.radar-wrap { display: grid; place-items: center; }
+.radar-wrap svg { width: 100%; max-width: 300px; height: auto; display: block; }
+.sweep { transform-origin: 150px 150px; animation: sweep 6s linear infinite; }
+.spin { transform-origin: 150px 150px; animation: sweep 60s linear infinite reverse; }
+.radar-shape { transform-origin: 150px 150px; animation: radarIn 1s cubic-bezier(.2, .8, .2, 1) both .2s; }
+.ping6 { transform-box: fill-box; transform-origin: center; animation: ping6 6s ease-out infinite; animation-delay: calc(var(--i, 0) * 1s); }
+
+/* animaciones de gráficas */
+.grow { transform-box: fill-box; transform-origin: 50% 100%; animation: grow .8s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(var(--i, 0) * 70ms + .1s); }
+.draw { stroke-dasharray: 1; stroke-dashoffset: 0; animation: draw 1.6s ease-out both .35s; }
+.pop { animation: pop .25s both; animation-delay: calc(var(--i, 0) * 16ms); }
+.ping { transform-box: fill-box; transform-origin: center; animation: ping 1.8s ease-out infinite; }
+.blink { animation: blink 1s steps(1) infinite; }
+.fade { animation: pop 1.2s both .6s; }
+
+/* kpi */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s4); }
+.kpi .k { font-size: 10.5px; color: var(--hud-dim); letter-spacing: .14em; text-transform: uppercase; }
+.kpi .v { font-family: var(--f-data); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 500; line-height: 1.15; margin-top: 3px; color: var(--hud-hi); text-shadow: var(--glow); }
+.kpi .d { font-size: 11.5px; color: var(--hud-2); }
+.up { color: var(--hud); } .up::before { content: "▲ "; font-size: .8em; }
+.down { color: var(--hud-alert); } .down::before { content: "! "; }
+
+/* kanban encargos */
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: var(--s3); overflow-x: auto; padding-bottom: 4px; }
+.col { min-width: 0; }
+.col-h { display: flex; justify-content: space-between; font: 600 11px var(--f-data); letter-spacing: .12em; text-transform: uppercase; color: var(--hud); border-bottom: 1px solid var(--hud); padding-bottom: 4px; margin-bottom: var(--s2); text-shadow: var(--glow); }
+.col-h span { color: var(--hud-dim); text-shadow: none; }
+.job { border: 1px solid var(--hud-dim); padding: 8px 9px; margin-bottom: var(--s2); background: rgba(56, 242, 196, .04); font-size: 12px; position: relative; animation: rise .45s both; animation-delay: calc(var(--i, 0) * 70ms); }
+.job .kind { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--hud-dim); }
+.job .who { font-weight: 600; margin-top: 2px; color: var(--hud-hi); }
+.job .meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--hud-2); }
+.job.late { border-color: var(--hud-alert); animation: rise .45s both, alarm 1.2s steps(1) infinite .6s; box-shadow: inset 3px 0 0 var(--hud-alert); }
+.job.late .age { color: var(--hud-alert); font-weight: 600; }
+.job .draft { margin-top: 6px; font-size: 10.5px; color: var(--hud); text-decoration: underline; text-underline-offset: 2px; }
+.job .draft::before { content: "> "; }
+.job.ghost { opacity: .5; }
+
+/* finanzas */
+.bars-svg, .spark-svg, .heat-svg { width: 100%; height: auto; display: block; }
+.cats { display: grid; gap: 7px; }
+.cat { display: grid; grid-template-columns: 112px 1fr 62px; gap: var(--s3); align-items: center; font-size: 12px; color: var(--hud-2); }
+.cat .track { height: 10px; position: relative; background: repeating-linear-gradient(90deg, var(--hud-bg-2) 0 6px, transparent 6px 8px); }
+.cat .fill { position: absolute; inset: 0 auto 0 0; background: repeating-linear-gradient(90deg, var(--hud) 0 6px, transparent 6px 8px); filter: drop-shadow(0 0 3px rgba(56, 242, 196, .6)); animation: fillx .9s steps(16) both; animation-delay: calc(var(--i, 0) * 90ms + .1s); }
+.cat .fill.hl { background: repeating-linear-gradient(90deg, var(--hud-alert) 0 6px, transparent 6px 8px); }
+.cat .amt { text-align: right; font-variant-numeric: tabular-nums; }
+.cat.total { border-top: 1px solid var(--hud); padding-top: 6px; color: var(--hud-hi); font-weight: 600; }
+.subs { width: 100%; border-collapse: collapse; font-size: 12px; }
+.subs td { padding: 6px 0; border-bottom: 1px dashed var(--hud-dim); vertical-align: top; color: var(--hud-2); }
+.subs td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: var(--s3); }
+.subs .note { display: block; font-size: 10.5px; color: var(--hud); }
+.subs .note.grey { color: var(--hud-dim); }
+.subs tfoot td { border-bottom: 0; font-weight: 600; padding-top: 8px; color: var(--hud-hi); }
+.legend { display: flex; flex-wrap: wrap; gap: var(--s4); font-size: 11px; color: var(--hud-2); margin-top: var(--s2); }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
+
+/* redes */
+.net { display: grid; gap: var(--s2); }
+.net .big { font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--hud-hi); text-shadow: var(--glow); }
+.net .row { display: flex; justify-content: space-between; gap: var(--s3); font-size: 12px; border-top: 1px dashed var(--hud-dim); padding-top: 5px; color: var(--hud-2); }
+.net .row span:last-child { font-variant-numeric: tabular-nums; }
+.repos { list-style: none; padding: 0; margin: var(--s3) 0 0; display: grid; gap: 4px; font-size: 12px; }
+.repos li { display: grid; grid-template-columns: 1fr auto; gap: var(--s3); border-top: 1px dashed var(--hud-dim); padding-top: 4px; color: var(--hud-2); }
+.repos li span:last-child { color: var(--hud-dim); }
+
+.view[hidden] { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .deck *, .deck::before, .deck::after, .deck *::before, .deck *::after, .logo-hud .cur { animation: none !important; }
+  .deck::before { display: none; }
+}
+
+/* ---------- módulos (fichas) ---------- */
+.modules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s5); margin-top: var(--s6); }
+.ficha { background: var(--paper-2); border: 1px solid var(--band); padding: var(--s5); position: relative; min-width: 0; }
+.ficha .label { position: absolute; top: var(--s4); right: var(--s4); font-family: var(--f-data); font-size: 10.5px; border: 1px solid var(--ink); padding: 1px 6px; }
+.ficha .label.new { border-color: var(--red); color: var(--red); }
+.ficha h3 { font-size: 20px; font-weight: 800; font-stretch: 95%; padding-right: 72px; }
+.ficha .src-line { font-family: var(--f-data); font-size: 11px; color: var(--grey); margin-top: 4px; }
+.ficha ul { margin: var(--s3) 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
+.ficha li { padding-left: 14px; position: relative; }
+.ficha li::before { content: ""; position: absolute; left: 0; top: .62em; width: 7px; height: 1.5px; background: var(--ink); }
+.ficha .idea { margin-top: var(--s4); border-top: 1px dashed var(--band); padding-top: var(--s3); font-size: 13px; }
+.ficha .idea b { color: var(--red); font-family: var(--f-data); font-size: 10.5px; letter-spacing: .1em; display: block; margin-bottom: 2px; }
+
+/* ---------- conexiones ---------- */
+.tbl-wrap { overflow-x: auto; margin-top: var(--s6); border-top: 2px solid var(--ink); }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 860px; }
+.tbl th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); padding: 10px var(--s3) 8px 0; border-bottom: 1px solid var(--ink); font-weight: 700; }
+.tbl td { padding: 12px var(--s3) 12px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.tbl td:first-child { font-weight: 800; white-space: nowrap; }
+.tbl .how { font-family: var(--f-data); font-size: 12px; }
+.tbl .risk { color: var(--red); }
+.callout { margin-top: var(--s6); display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: var(--s5); align-items: start; }
+.callout .tag { background: var(--ink); color: var(--paper-2); font-family: var(--f-data); font-size: 11px; padding: 6px 8px; letter-spacing: .08em; }
+.callout p + p { margin-top: var(--s3); }
+.callout p { max-width: 75ch; }
+code { font-family: var(--f-data); font-size: .9em; background: var(--band-2); padding: 1px 5px; }
+
+/* ---------- arquitectura ---------- */
+.arch { margin-top: var(--s6); overflow-x: auto; }
+.arch svg { min-width: 820px; width: 100%; height: auto; display: block; }
+.arch-notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s5); margin-top: var(--s6); }
+.arch-notes h3 { font-size: 14px; font-weight: 800; border-bottom: 2px solid var(--ink); padding-bottom: 4px; }
+.arch-notes p, .arch-notes li { font-size: 13.5px; color: var(--ink-2); }
+.arch-notes ul { margin: var(--s2) 0 0; padding-left: 18px; display: grid; gap: 4px; }
+
+/* ---------- fases ---------- */
+.phases { margin-top: var(--s6); display: grid; gap: 0; border-top: 2px solid var(--ink); }
+.phase { display: grid; grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1.3fr); gap: var(--s5); padding: var(--s4) 0; border-bottom: 1px solid var(--rule); align-items: start; }
+.phase .n { font-family: var(--f-ui); font-weight: 900; font-stretch: 125%; font-style: italic; font-size: 34px; line-height: 1; color: var(--band); }
+.phase:first-child .n { color: var(--red); }
+.phase h3 { font-size: 17px; font-weight: 800; }
+.phase .done-when { font-family: var(--f-data); font-size: 11px; color: var(--grey); margin-top: 4px; }
+.phase p { font-size: 13.5px; color: var(--ink-2); }
+
+/* ---------- decisiones ---------- */
+.questions { margin-top: var(--s6); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4) var(--s6); counter-reset: q; }
+.q { border-top: 1px solid var(--ink); padding-top: var(--s3); counter-increment: q; }
+.q h3 { font-size: 15px; font-weight: 800; }
+.q h3::before { content: "Q" counter(q, decimal-leading-zero) "  "; font-family: var(--f-data); color: var(--red); font-weight: 500; font-size: 12px; }
+.q p { font-size: 13.5px; color: var(--ink-2); margin-top: 4px; }
+.q .rec { margin-top: 6px; font-size: 12.5px; }
+.q .rec b { font-family: var(--f-data); font-size: 10.5px; letter-spacing: .08em; color: var(--ink); background: var(--band-2); padding: 1px 5px; margin-right: 4px; }
+.end { padding-block: var(--s7); text-align: center; color: var(--grey); font-size: 12px; }
+.end .spaced { display: block; margin-bottom: var(--s2); }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1020px) {
+  .c-3 { grid-column: span 6; }
+  .c-5, .c-7, .c-8, .md-12 { grid-column: span 12; }
+  .traits { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .swatches { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .type-specimen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  body { font-size: 14.5px; }
+  .cover-grid { grid-template-columns: minmax(0, 1fr); }
+  .ink-block { max-width: 360px; }
+  .c-3, .c-4, .c-5, .c-6 { grid-column: span 12; }
+  .traits { grid-template-columns: minmax(0, 1fr); }
+  .swatches { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .type-specimen, .modules, .arch-notes, .questions { grid-template-columns: minmax(0, 1fr); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .phase { grid-template-columns: 48px minmax(0, 1fr); }
+  .phase p { grid-column: 2; }
+  .callout { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .cat { grid-template-columns: 96px 1fr 56px; }
+  .band-top .code { display: none; }
+}
+</style>
+
+<!-- ===================== PORTADA ===================== -->
+<section class="cover">
+  <div class="wrap cover-grid">
+    <div class="ink-block" aria-hidden="true">
+      <canvas id="ink"></canvas>
+      <div class="kanji">生</div>
+      <div class="stamp">生活<br>記録</div>
+      <div class="sign">life</div>
+    </div>
+    <div class="cover-title">
+      <h1 class="logo-plate"><span class="logo-hud"><span class="mark">生</span>LIFE<span class="slash">/</span><span class="cur" aria-hidden="true"></span></span></h1>
+      <p class="sub">生活記録パネル</p>
+      <p class="lede">Una app de escritorio que reúne en una sola ventana tus encargos de Glutamato Cult, tu dinero en Revolut, tus redes y tu código. Los datos viven en tu ordenador. Se lee como una ficha técnica de artbook: papel, tinta, una banda negra por sección y el rojo reservado para lo que pide atención.</p>
+      <dl class="cover-meta">
+        <dt>Documento</dt><dd>Propuesta v2 · variante verde azulada de la consola · concepto, identidad, módulos, conexiones y fases</dd>
+        <dt>Revisión</dt><dd><span class="num">20.11.2026</span> · app de escritorio; Glutamato Cult no se toca, solo se lee el Gmail</dd>
+        <dt>Directorio</dt><dd class="num">C:\proyects\life</dd>
+        <dt>Referencia</dt><dd>core-inspiration/ · 120 láminas de artbook (tinta, bandas, fichas de personaje, pantallas de radio)</dd>
+      </dl>
+      <p class="cover-name spaced">E x p e d i e n t e &nbsp; p e r s o n a l</p>
+    </div>
+  </div>
+  <div class="wrap"><div class="folio"><span><b>LIFE</b> · Propuesta v2</span><span class="num">000 001</span></div></div>
+</section>
+
+<!-- ===================== IDENTIDAD ===================== -->
+<section id="identidad">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.01</span><h2>Establecimiento de la identidad</h2></div>
+      <div class="band-sub">アイデンティティ設定</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">De las láminas tomamos el lenguaje gráfico, no los personajes ni el nombre. La app entera es una consola de radio: fondo negro verdoso, texto en fósforo verde azulado, tramado de líneas y barridos. El papel del artbook se queda para este documento y para lo que se imprime.</p>
+      <div class="traits">
+        <div class="trait"><div class="t-k">A · PAPEL Y TINTA</div><h3>Solo para lo impreso</h3><p>Esta propuesta y el número anual en fanzine usan el papel del artbook. La app no.</p></div>
+        <div class="trait"><div class="t-k">B · BANDAS</div><h3>Cabecera negra + franja gris</h3><p>Cada bloque abre con la banda negra de título y una franja gris con su nombre en japonés. Cierra con un folio paginado.</p></div>
+        <div class="trait"><div class="t-k">C · FICHA TÉCNICA</div><h3>Notas al margen</h3><p>Como las hojas de diseño de personaje: cifras con flechas, anotaciones pequeñas y medidas.</p></div>
+        <div class="trait"><div class="t-k">D · CONSOLA</div><h3>Toda la interfaz</h3><p>Logo, menús, gráficas y avisos en fósforo verde azulado sobre negro, con brillo y tramado. Las alarmas, en rojo coral para que destaquen.</p></div>
+        <div class="trait"><div class="t-k">E · NOMBRES</div><h3>Letras espaciadas</h3><p>Títulos de sujeto en gris claro y muy espaciados, como los nombres bajo cada lámina.</p></div>
+      </div>
+
+      <div class="swatches" role="list" aria-label="Paleta">
+        <div class="sw" role="listitem" style="background:var(--hud-bg);color:var(--hud)"><b>Pantalla</b><span>#03110f</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud-bg-2);color:var(--hud)"><b>Panel</b><span>#082019</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud-dim);color:var(--hud-hi)"><b>Rejilla</b><span>#1B5A50</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud);color:var(--hud-bg)"><b>Fósforo</b><span>#38F2C4</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud-2);color:var(--hud-bg)"><b>Texto</b><span>#A3EEDB</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud-hi);color:var(--hud-bg)"><b>Cifra</b><span>#E4FFF7</span></div>
+        <div class="sw" role="listitem" style="background:var(--hud-alert);color:var(--hud-bg)"><b>Alarma</b><span>#FF5A4A</span></div>
+        <div class="sw" role="listitem" style="background:var(--paper);color:var(--ink);border:1px solid var(--rule)"><b>Papel · documento</b><span>#F4F5F6</span></div>
+      </div>
+
+      <div class="type-specimen">
+        <div class="spec spec-hud"><div class="role">Marca · IBM Plex Mono SemiBold</div><div class="sample"><span class="logo-hud" style="font-size:36px"><span class="mark">生</span>LIFE<span class="slash">/</span><span class="cur" aria-hidden="true"></span></span></div><div class="use">Sello 生, nombre y cursor que parpadea.</div></div>
+        <div class="spec spec-hud"><div class="role">Interfaz · IBM Plex Mono</div><div class="sample" style="font-size:17px;letter-spacing:.14em;color:var(--hud);text-shadow:var(--glow)">ENCARGOS SIN<br>RESPONDER</div><div class="use">Menús, pestañas, títulos y texto de la app. Una sola familia, como un terminal.</div></div>
+        <div class="spec spec-hud"><div class="role">Cifras · IBM Plex Mono</div><div class="sample num" style="font-size:24px;color:var(--hud-hi);text-shadow:var(--glow)">2.640,00 €<br><span style="font-size:14px;color:var(--hud-2);text-shadow:none">19.11 · 08:42</span></div><div class="use">Cifras con brillo, fechas y etiquetas.</div></div>
+        <div class="spec"><div class="role">Rótulos · Noto Sans JP + Yuji Boku</div><div class="sample" style="font-family:var(--f-jp);font-size:18px;letter-spacing:.3em">家計簿<br><span style="font-family:var(--f-brush);font-size:40px;letter-spacing:0">生</span></div><div class="use">Rótulos en japonés de cada bloque y el pincel del documento.</div></div>
+      </div>
+      <div class="motion">
+        <h3>Animaciones</h3>
+        <ul>
+          <li><b>Barrido</b> El radar gira y cada punto emite un pulso cuando la aguja pasa por encima.</li>
+          <li><b>Escritura</b> El parte del día se escribe línea a línea y termina con el cursor.</li>
+          <li><b>Segmentos</b> Las barras crecen por bloques, como un medidor de nivel.</li>
+          <li><b>Trazo</b> Las líneas de las gráficas se dibujan de izquierda a derecha.</li>
+          <li><b>Conteo</b> Las cifras grandes cuentan desde cero al abrir cada pestaña.</li>
+          <li><b>Alarma</b> Lo urgente parpadea en rojo; las fuentes vivas laten.</li>
+          <li><b>Pantalla</b> Tramado, viñeta, una franja de barrido y un parpadeo leve.</li>
+          <li><b>Reposo</b> Si Windows tiene reducidas las animaciones, todo queda quieto.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="folio"><span>Establecimiento de la identidad</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 002 003</span></div>
+  </div>
+</section>
+
+<!-- ===================== PANEL ===================== -->
+<section id="panel">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.02</span><h2>El panel</h2></div>
+      <div class="band-sub">パネル</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">Así se vería un jueves por la mañana. Todo lo que aparece abajo son <span class="example-tag">datos de ejemplo</span> inventados para enseñar el diseño, no tus cifras. Las pestañas (también con las flechas), el botón de privacidad (tecla P) y las animaciones funcionan.</p>
+
+      <div class="deck" id="deck">
+        <div class="titlebar" aria-hidden="true"><span>LIFE — 生活記録</span><span class="win"><i>–</i><i>□</i><i>×</i></span></div>
+        <div class="statusbar">
+          <span class="logo-hud"><span class="mark">生</span>LIFE<span class="slash">/</span><span class="cur" aria-hidden="true"></span></span>
+          <span class="clock"><span class="signal" aria-hidden="true"><b></b><b></b><b></b><b></b></span>JUE 19.11.2026 · 08:42 CET</span>
+          <span class="sources">
+            <span class="src"><i></i>Gmail</span>
+            <span class="src warn"><i></i>Revolut <em>· renovar acceso en 6 d</em></span>
+            <span class="src"><i></i>Instagram</span>
+            <span class="src"><i></i>YouTube</span>
+            <span class="src"><i></i>GitHub</span>
+          </span>
+          <button class="privacy-btn" id="privacy" type="button" aria-pressed="false">Ocultar cifras</button>
+        </div>
+        <div class="deck-tabs" role="tablist" aria-label="Vistas del panel">
+          <button role="tab" id="tab-hoy" aria-selected="true" aria-controls="v-hoy"><span class="fkey">F1</span>Hoy</button>
+          <button role="tab" id="tab-encargos" aria-selected="false" aria-controls="v-encargos"><span class="fkey">F2</span>Encargos</button>
+          <button role="tab" id="tab-dinero" aria-selected="false" aria-controls="v-dinero"><span class="fkey">F3</span>Dinero</button>
+          <button role="tab" id="tab-redes" aria-selected="false" aria-controls="v-redes"><span class="fkey">F4</span>Redes y código</button>
+        </div>
+
+        <!-- HOY -->
+        <div class="view" id="v-hoy" role="tabpanel" aria-labelledby="tab-hoy">
+          <div class="deck-grid">
+            <div class="cell hud c-7">
+              <div class="cell-h"><h3>Parte del día</h3><span class="jp">本日の報告</span></div>
+              <div class="hud-frame">
+                <ul class="brief">
+                  <li data-k="01"><span><b>2 encargos sin responder.</b> <span class="hot">Retrato · Lucía M. lleva 51 h</span> esperando. Hay un borrador de respuesta listo.</span></li>
+                  <li data-k="02"><span>Mañana se cobra <b>Adobe Creative Cloud: 24,19 €</b>. <span class="hot">Ha subido 2,00 €</span> desde octubre.</span></li>
+                  <li data-k="03"><span>Llevas ahorrado el <b>23 %</b> de lo que entró este mes. El objetivo es 25 %: faltan 51 € en 11 días.</span></li>
+                  <li data-k="04"><span>Café Ámbar pagó <b>450 €</b> ayer. El encargo pasa solo a <b>Cobrado</b>.</span></li>
+                  <li data-k="05"><span>El reel del lunes llegó a <b>3,1×</b> tu alcance medio. Esa semana entraron 2 encargos desde la web.</span></li>
+                  <li data-k="06"><span>Racha en GitHub: <b>12 días</b>. Último commit en glutamato_cult.</span></li>
+                </ul>
+              </div>
+              <div class="hud-foot"><span>GENERADO 07:30 · CLAUDE</span><span>SIGUIENTE PARTE · 20.11 07:30</span></div>
+            </div>
+            <div class="cell hud c-5">
+              <div class="cell-h"><h3>Radar de vida</h3><span class="jp">生活レーダー</span></div>
+              <div class="radar-wrap"><svg id="radar" viewBox="0 0 300 300" role="img" aria-label="Radar de vida: Trabajo 8, Dinero 6, Creación 7, Cuerpo 4, Gente 5, Descanso 3, sobre 10"></svg></div>
+              <div class="hud-foot"><span>SEMANA 47 · AUTOEVALUACIÓN + DATOS</span><span>DESCANSO ↓ 2</span></div>
+            </div>
+            <div class="cell c-12">
+              <div class="kpis">
+                <div class="kpi"><div class="k">Ahorro del mes</div><div class="v money-val">609 €</div><div class="d"><span class="up">23 %</span> de lo ingresado</div></div>
+                <div class="kpi"><div class="k">Colchón</div><div class="v">4,6 meses</div><div class="d">al gasto medio de 6 meses</div></div>
+                <div class="kpi"><div class="k">Encargos abiertos</div><div class="v">6</div><div class="d"><span class="down">1 fuera de plazo</span></div></div>
+                <div class="kpi"><div class="k">Cobrado en noviembre</div><div class="v money-val">1.370 €</div><div class="d">3 encargos · <span class="up">+18 %</span> vs oct</div></div>
+              </div>
+            </div>
+            <div class="cell c-8">
+              <div class="cell-h"><h3>Próximos cobros · 30 días</h3><span class="jp">支払予定</span></div>
+              <svg class="bars-svg" id="upcoming" viewBox="0 0 640 120" role="img" aria-label="Cargos previstos en los próximos 30 días"></svg>
+            </div>
+            <div class="cell c-4 md-12">
+              <div class="cell-h"><h3>Señales</h3><span class="jp">信号</span></div>
+              <div class="net">
+                <div class="row"><span>Días sin publicar en Instagram</span><span>3</span></div>
+                <div class="row"><span>Días desde el último vídeo</span><span class="down">19</span></div>
+                <div class="row"><span>Visitas a glutamatocult.com · 7 d</span><span>1.284</span></div>
+                <div class="row"><span>Hojas de encargo · 7 d</span><span>3</span></div>
+                <div class="row"><span>Conversión web → encargo</span><span>0,23 %</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ENCARGOS -->
+        <div class="view" id="v-encargos" role="tabpanel" aria-labelledby="tab-encargos" hidden>
+          <div class="deck-grid">
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Encargos · glutamatocult.com</h3><span class="jp">依頼</span></div>
+              <div class="kanban" id="kanban"></div>
+            </div>
+            <div class="cell c-12">
+              <div class="kpis">
+                <div class="kpi"><div class="k">Respuesta media</div><div class="v">9 h</div><div class="d">objetivo &lt; 24 h</div></div>
+                <div class="kpi"><div class="k">Conversión</div><div class="v">38 %</div><div class="d">de hoja a confirmado · 90 d</div></div>
+                <div class="kpi"><div class="k">Ticket medio</div><div class="v money-val">410 €</div><div class="d">foto 360 € · software 1.250 €</div></div>
+                <div class="kpi"><div class="k">Días hasta cobro</div><div class="v">6,5</div><div class="d">desde la entrega</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DINERO -->
+        <div class="view" id="v-dinero" role="tabpanel" aria-labelledby="tab-dinero" hidden>
+          <div class="deck-grid">
+            <div class="cell c-12">
+              <div class="kpis">
+                <div class="kpi"><div class="k">Saldo total</div><div class="v money-val">8.412 €</div><div class="d">cuenta 2.130 € · hucha 6.282 €</div></div>
+                <div class="kpi"><div class="k">Ingresos nov</div><div class="v money-val">2.640 €</div><div class="d"><span class="up">+9 %</span> vs media</div></div>
+                <div class="kpi"><div class="k">Gastos nov</div><div class="v money-val">2.031 €</div><div class="d"><span class="down">+4 %</span> vs media</div></div>
+                <div class="kpi"><div class="k">Tasa de ahorro</div><div class="v">23 %</div><div class="d">objetivo 25 %</div></div>
+              </div>
+            </div>
+            <div class="cell c-7">
+              <div class="cell-h"><h3>Ingresos y gastos · 6 meses</h3><span class="jp">収支</span></div>
+              <svg class="bars-svg" id="flow" viewBox="0 0 560 230" role="img" aria-label="Ingresos y gastos mensuales de junio a noviembre"></svg>
+              <div class="legend"><span><i style="background:var(--hud)"></i>Ingresos</span><span><i style="border:1px solid var(--hud-2);background:repeating-linear-gradient(45deg,var(--hud-2) 0 1px,transparent 1px 3px)"></i>Gastos</span><span><i style="background:var(--hud-hi);height:2px;vertical-align:3px"></i>Ahorro acumulado</span></div>
+            </div>
+            <div class="cell c-5">
+              <div class="cell-h"><h3>Gasto por categoría · nov</h3><span class="jp">分類</span></div>
+              <div class="cats" id="cats"></div>
+            </div>
+            <div class="cell c-6">
+              <div class="cell-h"><h3>Suscripciones detectadas</h3><span class="jp">定期購読</span></div>
+              <table class="subs" id="subs"></table>
+            </div>
+            <div class="cell c-6">
+              <div class="cell-h"><h3>Coste en horas de trabajo</h3><span class="jp">時間換算</span></div>
+              <p style="font-size:12px;margin-bottom:10px">Cada gasto convertido a horas de encargo, con tu tarifa media de 45 €/h.</p>
+              <div class="net">
+                <div class="row"><span>Suscripciones · al mes</span><span>1 h 36 min</span></div>
+                <div class="row"><span>Restaurantes · noviembre</span><span>4 h 05 min</span></div>
+                <div class="row"><span>Objetivo Fujifilm (deseo · 899 €)</span><span>20 h</span></div>
+                <div class="row"><span>Vivienda · al mes</span><span>16 h 40 min</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- REDES -->
+        <div class="view" id="v-redes" role="tabpanel" aria-labelledby="tab-redes" hidden>
+          <div class="deck-grid">
+            <div class="cell c-4">
+              <div class="cell-h"><h3>Instagram</h3><span class="jp">写真</span></div>
+              <div class="net">
+                <div><div class="big">4.812</div><div class="num sub">seguidores · <span class="up">+86</span> en 30 d</div></div>
+                <svg class="spark-svg" id="sp-ig" viewBox="0 0 300 60" role="img" aria-label="Seguidores de Instagram, 30 días"></svg>
+                <div class="row"><span>Alcance · 30 d</span><span>21,4 k</span></div>
+                <div class="row"><span>Mejor publicación</span><span>Reel Kioto · 3,1×</span></div>
+                <div class="row"><span>Mejor hora</span><span>JUE 20:00</span></div>
+              </div>
+            </div>
+            <div class="cell c-4">
+              <div class="cell-h"><h3>YouTube</h3><span class="jp">動画</span></div>
+              <div class="net">
+                <div><div class="big">1.204</div><div class="num sub">suscriptores · <span class="up">+31</span> en 28 d</div></div>
+                <svg class="spark-svg" id="sp-yt" viewBox="0 0 300 60" role="img" aria-label="Horas vistas en YouTube, 28 días"></svg>
+                <div class="row"><span>Horas vistas · 28 d</span><span>312 h</span></div>
+                <div class="row"><span>Retención media</span><span>41 %</span></div>
+                <div class="row"><span>Último vídeo</span><span>hace 19 d</span></div>
+              </div>
+            </div>
+            <div class="cell c-4">
+              <div class="cell-h"><h3>GitHub</h3><span class="jp">コード</span></div>
+              <div class="net">
+                <div><div class="big">12 días</div><div class="num sub">de racha · 214 contribuciones en 90 d</div></div>
+                <ul class="repos">
+                  <li><span>glutamato_cult</span><span>hoy</span></li>
+                  <li><span>linear-peaks</span><span>hace 4 d</span></li>
+                  <li><span>grimoire</span><span>hace 9 d</span></li>
+                  <li><span>indra-ingenia</span><span>hace 23 d</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Contribuciones · 52 semanas</h3><span class="jp">貢献</span></div>
+              <div style="overflow-x:auto"><svg class="heat-svg" id="heat" viewBox="0 0 764 120" style="min-width:620px" role="img" aria-label="Mapa de contribuciones de GitHub del último año"></svg></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="folio"><span>El panel</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 004 005</span></div>
+  </div>
+</section>
+
+<!-- ===================== MÓDULOS ===================== -->
+<section id="modulos">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.03</span><h2>Módulos</h2></div>
+      <div class="band-sub">モジュール設定</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">Cada módulo es una ficha: de dónde salen los datos, qué enseña y una idea que lo hace distinto de una app de finanzas o de métricas cualquiera. Los marcados <span style="color:var(--red);font-family:var(--f-data);font-size:13px">NUEVO</span> no los pediste, pero encajan.</p>
+      <div class="modules">
+        <article class="ficha">
+          <span class="label">M-01</span>
+          <h3>Encargos</h3>
+          <div class="src-line">Gmail · solo lectura</div>
+          <ul>
+            <li>Tablero Nuevo → Respondido → Presupuesto → Confirmado → Cobrado.</li>
+            <li>Lee los correos de la hoja de encargo y saca tipo, presupuesto, fecha, lugar e idioma.</li>
+            <li>Sabe si ya contestaste mirando si el hilo tiene un correo tuyo.</li>
+            <li>Aviso en rojo si un encargo pasa de 48 h sin respuesta.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Cruza el encargo con el ingreso en Revolut (importe y nombre) y lo marca cobrado solo. Así sabes qué tipo de encargo paga más y cuánto tardan en pagarte.</div>
+        </article>
+        <article class="ficha">
+          <span class="label">M-02</span>
+          <h3>Dinero</h3>
+          <div class="src-line">Revolut vía Open Banking · CSV de respaldo</div>
+          <ul>
+            <li>Saldo, ingresos, gastos y tasa de ahorro por mes.</li>
+            <li>Categorías automáticas, que corriges una vez y se recuerdan por comercio.</li>
+            <li>Colchón: meses que aguantas con lo ahorrado al gasto medio.</li>
+            <li>Objetivos con hucha: equipo, viaje, impuestos.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Cada gasto también en horas de tu trabajo, con tu tarifa real sacada de los encargos cobrados.</div>
+        </article>
+        <article class="ficha">
+          <span class="label">M-03</span>
+          <h3>Suscripciones y recurrentes</h3>
+          <div class="src-line">Derivado de las transacciones</div>
+          <ul>
+            <li>Detecta cargos que se repiten por comercio e intervalo: semanal, mensual o anual.</li>
+            <li>Calendario de próximos cobros a 30 días.</li>
+            <li>Total mensual y anual de lo que pagas sin pensar.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Avisa cuando una suscripción sube de precio, cuando aparece un cargo nuevo recurrente y cuando dos servicios hacen lo mismo.</div>
+        </article>
+        <article class="ficha">
+          <span class="label">M-04</span>
+          <h3>Redes</h3>
+          <div class="src-line">Instagram API · YouTube Data + Analytics</div>
+          <ul>
+            <li>Seguidores, alcance, mejor publicación y mejor hora para publicar.</li>
+            <li>YouTube: suscriptores, horas vistas, retención y fuentes de tráfico.</li>
+            <li>Histórico diario propio: las APIs solo dan ventanas cortas.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Pone las publicaciones en la misma línea de tiempo que las visitas a la web y los encargos. Se ve qué publicación trae trabajo.</div>
+        </article>
+        <article class="ficha">
+          <span class="label">M-05</span>
+          <h3>Código</h3>
+          <div class="src-line">GitHub GraphQL · token de solo lectura</div>
+          <ul>
+            <li>Mapa de contribuciones, racha y actividad por repo.</li>
+            <li>PRs e issues abiertos en tus proyectos.</li>
+            <li>Despliegues de Cloudflare de glutamatocult.com.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Proyectos dormidos: avisa cuando un repo lleva más de 3 semanas sin tocarse.</div>
+        </article>
+        <article class="ficha">
+          <span class="label new">M-06 · NUEVO</span>
+          <h3>Parte del día</h3>
+          <div class="src-line">Claude API · cada mañana a las 07:30</div>
+          <ul>
+            <li>Un resumen corto de lo que importa hoy, en la pantalla de radio.</li>
+            <li>Parte semanal el domingo con lo que cambió.</li>
+            <li>Borradores de respuesta a encargos. Nunca se envían solos.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Puedes preguntar al panel: «¿cuánto gasté en equipo de foto este año?» y responde con tus datos.</div>
+        </article>
+        <article class="ficha">
+          <span class="label new">M-07 · NUEVO</span>
+          <h3>Radar de vida</h3>
+          <div class="src-line">Autoevaluación semanal + datos</div>
+          <ul>
+            <li>Seis ejes: Trabajo, Dinero, Creación, Cuerpo, Gente, Descanso.</li>
+            <li>Un minuto el domingo: puntúas del 0 al 10 y escribes una línea.</li>
+            <li>Algunos ejes se ajustan con datos: ahorro, commits, publicaciones.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>El radar guarda la forma de cada semana. Se ve cuándo la vida se descompensa antes de notarlo.</div>
+        </article>
+        <article class="ficha">
+          <span class="label new">M-08 · NUEVO</span>
+          <h3>Bitácora</h3>
+          <div class="src-line">Entrada manual · Google Calendar</div>
+          <ul>
+            <li>Una línea al día, con fecha. Lo que pasó, no lo que hiciste.</li>
+            <li>Se mezcla con la agenda y las fotos subidas a Cloudinary.</li>
+            <li>«Hace un año»: lo que pasaba esta misma semana.</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>A fin de año se imprime como un número de fanzine: «Número 2026», con las cifras y la bitácora.</div>
+        </article>
+        <article class="ficha">
+          <span class="label new">M-09 · NUEVO</span>
+          <h3>Modo privado</h3>
+          <div class="src-line">Interfaz</div>
+          <ul>
+            <li>Un atajo (tecla <code>P</code>) emborrona todas las cifras de dinero.</li>
+            <li>Para enseñar la pantalla o abrir el panel en un sitio público.</li>
+            <li>Pruébalo en el panel de arriba: «Ocultar cifras».</li>
+          </ul>
+          <div class="idea"><b>LO DISTINTO</b>Los datos no salen de tu ordenador: base de datos cifrada y claves en el Administrador de credenciales de Windows.</div>
+        </article>
+      </div>
+    </div>
+    <div class="folio"><span>Módulos</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 006 007</span></div>
+  </div>
+</section>
+
+<!-- ===================== CONEXIONES ===================== -->
+<section id="conexiones">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.04</span><h2>Conexiones</h2></div>
+      <div class="band-sub">接続設定</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">Qué se puede leer de cada servicio, cómo se conecta y qué pide a cambio. Los límites en rojo hay que confirmarlos al montar cada conexión.</p>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>Servicio</th><th>Cómo se conecta</th><th>Qué leemos</th><th>Requisitos y límites</th><th>Cada cuánto</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Gmail</td>
+              <td class="how">Gmail API con OAuth de app de escritorio, permiso <code>gmail.readonly</code>. Búsqueda <code>from:web@glutamatocult.com subject:"Encargo ·"</code></td>
+              <td>Cada hoja de encargo (todos sus campos), el estado del hilo (si respondiste y cuándo) y el histórico de encargos anteriores</td>
+              <td class="risk">Si la app de Google se queda en modo «pruebas», el acceso caduca cada 7 días. Hay que pasarla a producción para uso personal, o usar IMAP con contraseña de aplicación (pide verificación en dos pasos).</td>
+              <td>Cada 10 min</td>
+            </tr>
+            <tr>
+              <td>Revolut</td>
+              <td class="how">Open Banking (PSD2) a través de un agregador: Enable Banking como primera opción. La app abre el navegador para que autorices en Revolut</td>
+              <td>Cuentas, saldo y transacciones con comercio, importe, fecha y divisa</td>
+              <td class="risk">Revolut no tiene API pública para cuentas personales. El permiso PSD2 caduca (90 a 180 días) y hay que renovarlo desde el banco. Confirmar el plan gratuito del agregador para cuentas propias.</td>
+              <td>4 veces al día</td>
+            </tr>
+            <tr>
+              <td>Revolut · CSV</td>
+              <td class="how">Exportar extracto desde la app y soltarlo en el panel</td>
+              <td>Lo mismo, con todo el histórico</td>
+              <td>Sin permisos ni caducidades. Sirve para empezar en la fase 2 y para cargar años anteriores.</td>
+              <td>Manual · mensual</td>
+            </tr>
+            <tr>
+              <td>Instagram</td>
+              <td class="how">Instagram API con inicio de sesión de Instagram (Meta for Developers)</td>
+              <td>Seguidores, alcance, visualizaciones e interacciones por publicación y por cuenta</td>
+              <td class="risk">Exige cuenta profesional (creador o empresa). La antigua Basic Display API ya no existe. El token dura 60 días y se renueva solo.</td>
+              <td>1 vez al día</td>
+            </tr>
+            <tr>
+              <td>YouTube</td>
+              <td class="how">YouTube Data API v3 + YouTube Analytics API, OAuth de solo lectura</td>
+              <td>Suscriptores, vídeos, visualizaciones, horas vistas, retención, fuentes de tráfico</td>
+              <td>Cuota de 10.000 unidades al día: sobra para un canal. Mismo proyecto de Google que Gmail.</td>
+              <td>1 vez al día</td>
+            </tr>
+            <tr>
+              <td>GitHub</td>
+              <td class="how">GraphQL API con token de acceso detallado, solo lectura</td>
+              <td>Calendario de contribuciones, repos, commits, PRs, issues</td>
+              <td>5.000 puntos por hora. Lo más sencillo de conectar: buen candidato para la primera conexión.</td>
+              <td>Cada hora</td>
+            </tr>
+            <tr>
+              <td>Extras</td>
+              <td class="how">Google Calendar · Cloudflare Web Analytics · Cloudinary</td>
+              <td>Agenda; visitas a glutamatocult.com; fotos subidas y uso de la cuenta</td>
+              <td>Solo lectura. Las visitas web cierran el embudo publicación → visita → hoja de encargo → cobro.</td>
+              <td>Diario</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="tag">ENCARGOS · FLUJO</span>
+        <div>
+          <p>LIFE no toca nada de glutamatocult.com: solo lee tu Gmail. El correo de cada hoja ya llega con una estructura fija, asunto <code>Encargo · Fotografía · Retrato · Nombre</code> y líneas <code>Clave: valor</code> en el cuerpo, así que se puede convertir en una ficha de encargo sin adivinar nada.</p>
+          <p>Del mismo hilo sale el estado: si hay un correo tuyo después de la hoja, el encargo pasa a «Respondido». Presupuesto y Confirmado los marcas tú con un clic, o Claude los propone leyendo tus respuestas.</p>
+          <p>El permiso es de solo lectura: LIFE no puede enviar, borrar ni mover correos.</p>
+        </div>
+      </div>
+    </div>
+    <div class="folio"><span>Conexiones</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 008 009</span></div>
+  </div>
+</section>
+
+<!-- ===================== ARQUITECTURA ===================== -->
+<section id="arquitectura">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.05</span><h2>Arquitectura</h2></div>
+      <div class="band-sub">構成図</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">Una app de escritorio para Windows hecha con Tauri 2. La interfaz es la misma web que ya sabes hacer (Astro, TypeScript y CSS propio) dentro de una ventana nativa. Un núcleo pequeño en Rust sincroniza las cuentas y guarda todo en un archivo SQLite en tu ordenador. Sin servidor y sin nube propia.</p>
+      <div class="arch">
+        <svg viewBox="0 0 980 330" role="img" aria-label="Diagrama: las cuentas en internet alimentan a los sincronizadores del núcleo Rust de la app, que guarda en un SQLite local y lee las claves del Administrador de credenciales de Windows; la ventana muestra el panel; Claude genera el parte del día">
+          <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#131316"/></marker></defs>
+          <g font-family="Archivo, Arial, sans-serif" font-size="13" fill="#131316">
+            <text x="20" y="22" font-size="11" letter-spacing="1.5" fill="#8e909b">INTERNET · SOLO LECTURA</text>
+            <text x="270" y="22" font-size="11" letter-spacing="1.5" fill="#8e909b">TU ORDENADOR</text>
+            <rect x="255" y="28" width="715" height="274" fill="none" stroke="#c4c6cf" stroke-dasharray="5 4"/>
+            <g font-size="12.5">
+              <rect x="20" y="34" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="54">Gmail · encargos</text>
+              <rect x="20" y="72" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="92">Google Calendar</text>
+              <rect x="20" y="110" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="130">Revolut · Open Banking</text>
+              <rect x="20" y="148" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="168">Instagram</text>
+              <rect x="20" y="186" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="206">YouTube</text>
+              <rect x="20" y="224" width="170" height="30" fill="#fff" stroke="#131316"/><text x="32" y="244">GitHub</text>
+              <rect x="20" y="262" width="170" height="30" fill="#fff" stroke="#c4c6cf" stroke-dasharray="4 3"/><text x="32" y="282" fill="#44454c">Claude API</text>
+            </g>
+            <rect x="270" y="44" width="250" height="248" fill="#131316"/>
+            <text x="286" y="70" fill="#fff" font-weight="700" font-size="15">Núcleo Rust · Tauri</text>
+            <text x="286" y="90" fill="#c4c6cf" font-size="11.5" font-family="IBM Plex Mono, monospace">en la bandeja del sistema</text>
+            <g fill="#e3e4ea" font-size="12.5">
+              <text x="286" y="122">sync/gmail · cada 10 min</text>
+              <text x="286" y="146">sync/banco · 4 al día</text>
+              <text x="286" y="170">sync/redes · diario</text>
+              <text x="286" y="194">sync/github · cada hora</text>
+              <text x="286" y="218">importar CSV de Revolut</text>
+              <text x="286" y="242">detectar recurrentes</text>
+              <text x="286" y="266">conciliar encargo ↔ cobro</text>
+            </g>
+            <rect x="600" y="44" width="160" height="110" fill="#fff" stroke="#131316" stroke-width="2"/>
+            <text x="616" y="72" font-weight="700" font-size="15">life.db · SQLite</text>
+            <g font-size="11.5" font-family="IBM Plex Mono, monospace" fill="#44454c">
+              <text x="616" y="94">encargos</text><text x="616" y="110">transacciones</text><text x="616" y="126">suscripciones</text><text x="616" y="142">metricas_diarias</text>
+            </g>
+            <rect x="600" y="182" width="160" height="110" fill="#fff" stroke="#131316"/>
+            <text x="616" y="208" font-weight="700" font-size="13.5">Credenciales</text>
+            <text x="616" y="226" font-weight="700" font-size="13.5">de Windows</text>
+            <g font-size="11.5" font-family="IBM Plex Mono, monospace" fill="#44454c">
+              <text x="616" y="250">tokens OAuth</text><text x="616" y="266">clave de Claude</text><text x="616" y="282">clave de la base</text>
+            </g>
+            <rect x="830" y="100" width="130" height="126" fill="#fff" stroke="#131316"/>
+            <rect x="830" y="100" width="130" height="24" fill="#c5161d"/>
+            <text x="842" y="117" fill="#fff" font-size="11" letter-spacing="1">VENTANA</text>
+            <text x="842" y="150" font-weight="700" font-size="15">Panel Astro</text>
+            <text x="842" y="172" font-size="12" fill="#44454c">webview nativa</text>
+            <text x="842" y="190" font-size="12" fill="#44454c">avisos de Windows</text>
+            <text x="842" y="208" font-size="12" fill="#44454c">abre al iniciar</text>
+            <g stroke="#131316" stroke-width="1.3" fill="none" marker-end="url(#ar)">
+              <path d="M190 49H262"/><path d="M190 87H262"/><path d="M190 125H262"/><path d="M190 163H262"/><path d="M190 201H262"/><path d="M190 239H262"/><path d="M262 277H190" stroke="#c4c6cf"/>
+              <path d="M520 99H592"/>
+              <path d="M520 237H592"/>
+              <path d="M760 128H822"/>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <div class="arch-notes">
+        <div>
+          <h3>Seguridad</h3>
+          <ul>
+            <li>Todo vive en tu ordenador. No hay servidor ni base de datos en la nube.</li>
+            <li>Tokens y claves en el Administrador de credenciales de Windows. Nunca en Git ni en archivos.</li>
+            <li><code>life.db</code> cifrada (SQLCipher). Una copia de seguridad cifrada en la carpeta que elijas.</li>
+            <li>Todos los permisos son de solo lectura. A Claude solo llegan los datos de cada tarea, nunca tokens.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Modelo de datos</h3>
+          <ul>
+            <li><code>metricas_diarias</code>: una fila por fuente, clave y día. Así guardamos histórico aunque la API solo dé 30 días.</li>
+            <li><code>transacciones</code> con categoría propuesta y categoría corregida.</li>
+            <li><code>encargos</code> con estado, fechas de cada paso e id de la transacción que lo paga.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Modelos de Claude</h3>
+          <ul>
+            <li>Haiku para categorizar transacciones y leer correos: rápido y barato.</li>
+            <li>Sonnet para el parte del día, el parte semanal y las preguntas.</li>
+            <li>Coste estimado: céntimos al día con un uso personal.</li>
+            <li>Sin conexión, el panel funciona igual con los últimos datos guardados.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="folio"><span>Arquitectura</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 010 011</span></div>
+  </div>
+</section>
+
+<!-- ===================== FASES ===================== -->
+<section id="fases">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.06</span><h2>Fases</h2></div>
+      <div class="band-sub">開発段階</div>
+    </header>
+    <div class="section-body">
+      <p class="lede">En orden de utilidad: primero lo que te ahorra perder un encargo, luego el dinero, luego el resto.</p>
+      <div class="phases">
+        <div class="phase"><div class="n">0</div><div><h3>Base</h3><div class="done-when">Hecha cuando: LIFE.exe se instala, abre al iniciar Windows y muestra tus datos de GitHub</div></div><p>Proyecto Tauri 2 + Astro en <code>C:\proyects\life</code>. Tokens de identidad, bandas, folios y rejilla del panel. SQLite cifrada, credenciales de Windows, icono en la bandeja. GitHub para probar la tubería de punta a punta.</p></div>
+        <div class="phase"><div class="n">1</div><div><h3>Encargos</h3><div class="done-when">Hecha cuando: los encargos de tu Gmail aparecen en el tablero con su estado</div></div><p>Conexión de solo lectura a Gmail, lector de las hojas de encargo, tablero con estados, «respondido» según el hilo, aviso de Windows a las 48 h, carga de encargos antiguos.</p></div>
+        <div class="phase"><div class="n">2</div><div><h3>Dinero</h3><div class="done-when">Hecha cuando: el mes en curso cuadra con la app de Revolut</div></div><p>Importador de CSV, categorías, tasa de ahorro, colchón, suscripciones y recurrentes. Después, Open Banking para que se actualice solo. Conciliación encargo ↔ cobro.</p></div>
+        <div class="phase"><div class="n">3</div><div><h3>Redes y código</h3><div class="done-when">Hecha cuando: hay 30 días de histórico propio guardado</div></div><p>YouTube e Instagram con histórico diario, GitHub completo, visitas de Cloudflare a la web. Línea de tiempo publicación → visita → encargo.</p></div>
+        <div class="phase"><div class="n">4</div><div><h3>Parte del día y radar</h3><div class="done-when">Hecha cuando: el parte llega cada mañana sin tocar nada</div></div><p>Parte diario y semanal con Claude, borradores de respuesta, preguntas al panel, radar de vida con autoevaluación del domingo.</p></div>
+        <div class="phase"><div class="n">5</div><div><h3>Extras</h3><div class="done-when">Sin fecha</div></div><p>Bitácora, «hace un año», Google Calendar, número anual en formato fanzine, atajo global de teclado para abrir LIFE desde cualquier sitio.</p></div>
+      </div>
+    </div>
+    <div class="folio"><span>Fases</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 012 013</span></div>
+  </div>
+</section>
+
+<!-- ===================== DECISIONES ===================== -->
+<section id="decisiones">
+  <div class="wrap">
+    <header class="band">
+      <div class="band-top"><span class="code">SEC.07</span><h2>Decisiones pendientes</h2></div>
+      <div class="band-sub">未決事項</div>
+    </header>
+    <div class="section-body">
+      <div class="questions">
+        <div class="q"><h3>¿Tauri o Electron?</h3><p>Tauri da un instalador de unos 10 MB, usa poca memoria y guarda las claves con Windows. Electron es más conocido pero pesa más de 100 MB y gasta más RAM en segundo plano.</p><p class="rec"><b>RECOMENDADO</b>Tauri 2.</p></div>
+        <div class="q"><h3>¿Gmail por API o por IMAP?</h3><p>La API es más precisa (hilos, etiquetas) pero hay que crear un proyecto en Google Cloud y sacarlo del modo pruebas. IMAP con contraseña de aplicación es más rápido de montar y no caduca.</p><p class="rec"><b>RECOMENDADO</b>API, con IMAP como plan B.</p></div>
+        <div class="q"><h3>¿Sincroniza con la ventana cerrada?</h3><p>Si LIFE se queda en la bandeja del sistema y arranca con Windows, el parte del día está listo al encender. Si no, sincroniza solo cuando la abres.</p><p class="rec"><b>RECOMENDADO</b>Bandeja + arranque con Windows.</p></div>
+        <div class="q"><h3>¿Revolut automático o CSV?</h3><p>Open Banking se actualiza solo pero hay que renovar el permiso cada pocos meses. El CSV no caduca nunca pero es manual.</p><p class="rec"><b>RECOMENDADO</b>CSV para empezar y Open Banking cuando el resto funcione.</p></div>
+        <div class="q"><h3>¿Tu Instagram es cuenta profesional?</h3><p>Sin cuenta de creador o empresa no hay métricas por API. El cambio es gratuito y se hace desde la app.</p><p class="rec"><b>A CONFIRMAR</b>Tipo de cuenta y canal de YouTube.</p></div>
+        <div class="q"><h3>¿Qué ejes tiene tu radar?</h3><p>Propongo Trabajo, Dinero, Creación, Cuerpo, Gente y Descanso. Se pueden cambiar.</p><p class="rec"><b>A CONFIRMAR</b>Seis ejes, tus palabras.</p></div>
+        <div class="q"><h3>¿Japonés en las franjas?</h3><p>Sigue el artbook y conecta con el japonés de glutamatocult.com. Si lo prefieres, la franja gris puede llevar el código de sección.</p><p class="rec"><b>RECOMENDADO</b>Mantenerlo.</p></div>
+      </div>
+    </div>
+    <div class="folio"><span>Decisiones pendientes</span><span class="num"><b>LIFE</b> · Propuesta v2 &nbsp; 014 015</span></div>
+  </div>
+</section>
+
+<div class="end wrap"><span class="spaced">F i n &nbsp; d e l &nbsp; e x p e d i e n t e</span>LIFE · propuesta v2 · 20.11.2026</div>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const css = getComputedStyle(document.documentElement);
+  const C = n => css.getPropertyValue(n).trim();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const H = { bg: C("--hud-bg"), bg2: C("--hud-bg-2"), hud: C("--hud"), soft: C("--hud-2"), hi: C("--hud-hi"), dim: C("--hud-dim"), alert: C("--hud-alert") };
+  const MONO = "IBM Plex Mono, monospace";
+  const el = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const label = (parent, x, y, s, a = {}) => {
+    const t = el("text", { x, y, "font-size": 10, fill: H.dim, "font-family": MONO, ...a }, parent);
+    t.textContent = s;
+    return t;
+  };
+  const fmt = (n, d = 0) => n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: "always" });
+  const eur = n => fmt(n, 2) + " €";
+  const hatch = (svg, id, color) => {
+    const defs = el("defs", {}, svg);
+    const p = el("pattern", { id, width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+    el("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: color, "stroke-width": 1.4 }, p);
+  };
+  let seed = 47;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+  /* ---------- bloque de tinta de la portada ---------- */
+  function ink() {
+    const cv = document.getElementById("ink");
+    const box = cv.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = box.width * dpr; cv.height = box.height * dpr;
+    const g = cv.getContext("2d");
+    g.scale(dpr, dpr);
+    const w = box.width, h = box.height;
+    g.clearRect(0, 0, w, h);
+    let s = 11; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    g.fillStyle = C("--ink");
+    const x0 = w * .1, x1 = w * .9, y0 = h * .08, y1 = h * .8;
+    g.beginPath();
+    g.moveTo(x0, y0);
+    for (let x = x0; x <= x1; x += 4) g.lineTo(x, y0 + (r() - .5) * 7);
+    for (let y = y0; y <= y1; y += 4) g.lineTo(x1 + (r() - .5) * 9, y);
+    for (let x = x1; x >= x0; x -= 4) g.lineTo(x, y1 + (r() - .3) * 12);
+    for (let y = y1; y >= y0; y -= 4) g.lineTo(x0 + (r() - .5) * 6, y);
+    g.closePath(); g.fill();
+    for (let i = 0; i < 26; i++) {
+      const y = y1 + 4 + i * 3.2 + r() * 2;
+      const len = (x1 - x0) * (1 - i / 30) * (.4 + r() * .6);
+      const sx = x0 + r() * (x1 - x0 - len);
+      g.globalAlpha = .9 - i * .03;
+      g.fillRect(sx, y, len, 1 + r() * 1.6);
+    }
+    g.globalAlpha = 1;
+    g.fillStyle = C("--paper-2");
+    for (let i = 0; i < 900; i++) {
+      const x = x0 + r() * (x1 - x0), y = y0 + r() * (y1 - y0);
+      g.globalAlpha = r() * .35;
+      g.fillRect(x, y, r() * 2.2, r() * 1.2);
+    }
+    g.globalAlpha = 1; g.fillStyle = C("--red");
+    g.fillRect(0, h * .5, w * .1 - 6, 10);
+  }
+  ink();
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(ink, 120); });
+
+  /* ---------- cifras que cuentan ---------- */
+  function countUp(root) {
+    if (reduce || !root) return;
+    root.querySelectorAll(".kpi .v, .net .big").forEach(node => {
+      const original = node.dataset.t || (node.dataset.t = node.textContent);
+      const m = original.match(/\d[\d.]*(,\d+)?/);
+      if (!m) return;
+      const raw = m[0];
+      const dec = (raw.split(",")[1] || "").length;
+      const target = parseFloat(raw.replace(/\./g, "").replace(",", "."));
+      const t0 = performance.now(), dur = 950;
+      const step = now => {
+        const p = Math.min(1, (now - t0) / dur);
+        const e = 1 - Math.pow(1 - p, 3);
+        node.textContent = p < 1 ? original.replace(raw, fmt(target * e, dec)) : original;
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  /* ---------- pestañas ---------- */
+  const tabs = [...document.querySelectorAll('.deck-tabs [role="tab"]')];
+  function select(tab) {
+    tabs.forEach(t => {
+      const on = t === tab;
+      t.setAttribute("aria-selected", on);
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    });
+    countUp(document.getElementById(tab.getAttribute("aria-controls")));
+    try { localStorage.setItem("life-tab", tab.id); } catch (e) {}
+  }
+  tabs.forEach((t, i) => {
+    t.addEventListener("click", () => select(t));
+    t.addEventListener("keydown", e => {
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        const n = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+        select(n); n.focus();
+      }
+    });
+  });
+
+  /* ---------- privacidad ---------- */
+  const deck = document.getElementById("deck"), pb = document.getElementById("privacy");
+  const togglePrivacy = () => {
+    const on = !deck.classList.contains("private");
+    deck.classList.toggle("private", on);
+    pb.setAttribute("aria-pressed", on);
+    pb.textContent = on ? "Mostrar cifras" : "Ocultar cifras";
+  };
+  pb.addEventListener("click", togglePrivacy);
+  document.addEventListener("keydown", e => {
+    if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) togglePrivacy();
+  });
+
+  /* ---------- parte del día: orden de escritura ---------- */
+  document.querySelectorAll(".brief li").forEach((li, i) => li.style.setProperty("--i", i));
+
+  /* ---------- radar ---------- */
+  (function radar() {
+    const svg = document.getElementById("radar");
+    const cx = 150, cy = 150, R = 105;
+    const axes = [["TRABAJO", 8], ["DINERO", 6], ["CREACIÓN", 7], ["CUERPO", 4], ["GENTE", 5], ["DESCANSO", 3]];
+    const prev = [7, 6, 7, 5, 5, 5];
+    const pt = (i, v) => { const a = -Math.PI / 2 + i * 2 * Math.PI / axes.length; return [cx + Math.cos(a) * R * v / 10, cy + Math.sin(a) * R * v / 10]; };
+    const spin = el("g", { class: "spin" }, svg);
+    for (let d = 0; d < 360; d += 10) {
+      const a = d * Math.PI / 180, r1 = R + 6, r2 = R + (d % 30 ? 9 : 13);
+      el("line", { x1: cx + Math.cos(a) * r1, y1: cy + Math.sin(a) * r1, x2: cx + Math.cos(a) * r2, y2: cy + Math.sin(a) * r2, stroke: H.dim, "stroke-width": 1 }, spin);
+    }
+    for (let k = 1; k <= 5; k++) el("circle", { cx, cy, r: R * k / 5, fill: "none", stroke: H.dim, "stroke-width": k === 5 ? 1.2 : .7 }, svg);
+    axes.forEach((a, i) => {
+      const [x, y] = pt(i, 10);
+      el("line", { x1: cx, y1: cy, x2: x, y2: y, stroke: H.dim, "stroke-width": .7 }, svg);
+      const [lx, ly] = pt(i, 13.4);
+      label(svg, lx, ly + 4, a[0], { "text-anchor": "middle", fill: H.soft, "letter-spacing": 1 });
+    });
+    const sw = el("g", { class: "sweep" }, svg);
+    const ex = cx - R * Math.sin(Math.PI / 5), ey = cy - R * Math.cos(Math.PI / 5);
+    el("path", { d: `M${cx} ${cy}L${cx} ${cy - R}A${R} ${R} 0 0 0 ${ex} ${ey}Z`, fill: H.hud, opacity: .14 }, sw);
+    el("line", { x1: cx, y1: cy, x2: cx, y2: cy - R, stroke: H.hud, "stroke-width": 1.2, opacity: .85 }, sw);
+    el("polygon", { points: prev.map((v, i) => pt(i, v).join(",")).join(" "), fill: "none", stroke: H.soft, "stroke-dasharray": "3 3", "stroke-width": 1, opacity: .55 }, svg);
+    const shape = el("g", { class: "radar-shape" }, svg);
+    el("polygon", { points: axes.map((a, i) => pt(i, a[1]).join(",")).join(" "), fill: H.hud, "fill-opacity": .22, stroke: H.hud, "stroke-width": 1.6, class: "glow" }, shape);
+    axes.forEach((a, i) => {
+      const [x, y] = pt(i, a[1]);
+      el("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: H.hud, class: "ping6", style: `--i:${i}` }, shape);
+      el("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: H.hud }, shape);
+      label(shape, x + 6, y - 5, a[1], { fill: H.hi });
+    });
+    el("circle", { cx, cy, r: 2.5, fill: H.hud }, svg);
+  })();
+
+  /* ---------- próximos cobros ---------- */
+  (function upcoming() {
+    const svg = document.getElementById("upcoming");
+    hatch(svg, "hatch-up", H.hud);
+    const items = [[1, "Adobe CC", 24.19, true], [4, "Spotify", 11.99], [8, "iCloud+", 2.99], [11, "Alquiler", 750], [12, "Copilot", 10], [17, "Netflix", 13.99], [23, "Filmin", 8.99], [27, "Dominio .com", 10.46]];
+    const W = 640, x0 = 12, x1 = W - 12, base = 78, days = 30;
+    const X = d => x0 + (x1 - x0) * d / days;
+    el("line", { x1: x0, y1: base, x2: x1, y2: base, stroke: H.hud, "stroke-width": 1.2 }, svg);
+    for (let d = 0; d <= days; d++) el("line", { x1: X(d), y1: base, x2: X(d), y2: base + (d % 7 === 0 ? 7 : 3), stroke: H.dim, "stroke-width": .8 }, svg);
+    ["HOY", "+7", "+14", "+21", "+28"].forEach((l, i) => label(svg, X(i * 7), base + 20, l, { "text-anchor": i ? "middle" : "start", fill: i ? H.dim : H.hud }));
+    el("line", { x1: X(0), y1: 6, x2: X(0), y2: base, stroke: H.hud, "stroke-dasharray": "2 3", class: "blink" }, svg);
+    const maxSmall = 25;
+    items.forEach(([d, name, amt, hl], i) => {
+      const h = Math.min(amt, maxSmall) / maxSmall * 44 + 6;
+      const big = amt > maxSmall;
+      el("rect", { x: X(d) - 4, y: base - h, width: 8, height: h, fill: big ? "url(#hatch-up)" : hl ? H.alert : H.hud, stroke: big ? H.hud : "none", class: "grow glow", style: `--i:${i}` }, svg);
+      label(svg, X(d), base - h - 6 - (i % 2) * 11, name, { "text-anchor": "middle", "font-size": 9.5, fill: hl ? H.alert : H.soft, class: "fade" });
+    });
+    label(svg, x1, base + 34, "TOTAL PREVISTO " + eur(items.reduce((s, i) => s + i[2], 0)) + " · ALQUILER NO A ESCALA", { "text-anchor": "end", fill: H.soft });
+  })();
+
+  /* ---------- kanban ---------- */
+  (function kanban() {
+    const cols = [
+      ["Nuevo", [
+        { k: "Fotografía · Retrato", who: "Lucía M.", age: "51 h", money: "Sin decidir", late: true, draft: true },
+        { k: "Software · Web para negocio", who: "Estudio Brote", age: "6 h", money: "1.500–3.000 €", draft: true }]],
+      ["Respondido", [
+        { k: "Fotografía · Concierto", who: "Banda Los Lunes", age: "ayer", money: "300–600 €" }]],
+      ["Presupuesto", [
+        { k: "Fotografía · Marca", who: "Taller Ceniza", age: "3 d", money: "520 €" },
+        { k: "Software · Portfolio", who: "Irene P.", age: "5 d", money: "1.800 €" }]],
+      ["Confirmado", [
+        { k: "Fotografía · Fanzine", who: "Colectivo Nébula", age: "28.11", money: "300 €" }]],
+      ["Cobrado · nov", [
+        { k: "Fotografía · Marca", who: "Café Ámbar", age: "18.11", money: "450 €", paid: true },
+        { k: "Fotografía · Retrato", who: "Daniel R.", age: "09.11", money: "220 €", paid: true, ghost: true },
+        { k: "Software · Arreglos web", who: "Librería Oca", age: "04.11", money: "700 €", paid: true, ghost: true }]]
+    ];
+    const root = document.getElementById("kanban");
+    let n = 0;
+    cols.forEach(([name, jobs]) => {
+      const c = document.createElement("div"); c.className = "col";
+      c.innerHTML = `<div class="col-h">${name}<span>[${jobs.length}]</span></div>`;
+      jobs.forEach(j => {
+        const d = document.createElement("div");
+        d.className = "job" + (j.late ? " late" : "") + (j.ghost ? " ghost" : "");
+        d.style.setProperty("--i", n++);
+        d.innerHTML = `<div class="kind">${j.k}</div><div class="who">${j.who}</div><div class="meta"><span class="age">${j.age}</span><span class="${/€/.test(j.money) ? "money-val" : ""}">${j.money}</span></div>` +
+          (j.draft ? `<div class="draft">Borrador de respuesta listo</div>` : "") +
+          (j.paid ? `<div class="meta"><span>✓ conciliado con Revolut</span></div>` : "");
+        c.appendChild(d);
+      });
+      root.appendChild(c);
+    });
+  })();
+
+  /* ---------- flujo 6 meses ---------- */
+  (function flow() {
+    const svg = document.getElementById("flow");
+    hatch(svg, "hatch-flow", H.soft);
+    const m = [["JUN", 2310, 1980], ["JUL", 2980, 2240], ["AGO", 1720, 2390], ["SEP", 2450, 1890], ["OCT", 2420, 1950], ["NOV", 2640, 2031]];
+    const W = 560, Hh = 230, l = 44, r = 14, t = 14, b = 30, max = 3000;
+    const Y = v => t + (Hh - t - b) * (1 - v / max);
+    const gw = (W - l - r) / m.length;
+    [0, 1000, 2000, 3000].forEach(v => {
+      el("line", { x1: l, y1: Y(v), x2: W - r, y2: Y(v), stroke: H.dim, "stroke-width": 1, "stroke-dasharray": v ? "2 4" : "none" }, svg);
+      label(svg, l - 6, Y(v) + 3.5, v ? (v / 1000) + "k" : "0", { "text-anchor": "end" });
+    });
+    let acc = 0; const line = [];
+    m.forEach(([mo, inc, exp], i) => {
+      const gx = l + i * gw + gw * .18, bw = gw * .3;
+      el("rect", { x: gx, y: Y(inc), width: bw, height: Y(0) - Y(inc), fill: H.hud, class: "grow glow", style: `--i:${i * 2}` }, svg);
+      el("rect", { x: gx + bw + 2, y: Y(exp), width: bw, height: Y(0) - Y(exp), fill: exp > inc ? H.alert : "url(#hatch-flow)", stroke: exp > inc ? H.alert : H.soft, "stroke-width": 1, class: "grow", style: `--i:${i * 2 + 1}` }, svg);
+      label(svg, gx + bw + 1, Hh - 10, mo, { "text-anchor": "middle", "font-size": 10.5, fill: i === m.length - 1 ? H.hud : H.dim, "font-weight": i === m.length - 1 ? 600 : 400 });
+      acc += inc - exp; line.push([gx + bw + 1, Y(acc)]);
+    });
+    el("polyline", { points: line.map(p => p.join(",")).join(" "), fill: "none", stroke: H.hi, "stroke-width": 2, pathLength: 1, class: "draw glow" }, svg);
+    line.forEach((p, i) => el("rect", { x: p[0] - 2.5, y: p[1] - 2.5, width: 5, height: 5, fill: i === line.length - 1 ? H.hi : H.bg, stroke: H.hi, "stroke-width": 1.2, class: "fade" }, svg));
+    const last = line[line.length - 1];
+    el("rect", { x: last[0] - 2.5, y: last[1] - 2.5, width: 5, height: 5, fill: "none", stroke: H.hi, class: "ping" }, svg);
+    label(svg, last[0], last[1] - 10, "+" + fmt(acc) + " €", { "text-anchor": "middle", "font-size": 10.5, fill: H.hi, class: "money-val fade" });
+    label(svg, l + 2 * gw + gw * .5, Y(2390) - 6, "VIAJE", { "text-anchor": "middle", "font-size": 9.5, fill: H.alert });
+  })();
+
+  /* ---------- categorías ---------- */
+  (function cats() {
+    const data = [["Vivienda", 750], ["Súper", 312], ["Otros", 236], ["Equipo de foto", 239, true], ["Restaurantes", 184], ["Ocio", 142], ["Transporte", 96], ["Suscripciones", 72]]
+      .sort((a, b) => b[1] - a[1]);
+    const max = data[0][1];
+    const root = document.getElementById("cats");
+    data.forEach(([n, v, hl], i) => {
+      const d = document.createElement("div"); d.className = "cat";
+      d.innerHTML = `<span>${n}${hl ? ' <span style="color:var(--hud-alert);font-size:10.5px">↑2×</span>' : ""}</span><span class="track"><span class="fill${hl ? " hl" : ""}" style="width:${v / max * 100}%;--i:${i}"></span></span><span class="amt money-val">${fmt(v)} €</span>`;
+      root.appendChild(d);
+    });
+    const tot = document.createElement("div"); tot.className = "cat total";
+    tot.innerHTML = `<span>Total</span><span></span><span class="amt money-val">${fmt(data.reduce((s, d) => s + d[1], 0))} €</span>`;
+    root.appendChild(tot);
+  })();
+
+  /* ---------- suscripciones ---------- */
+  (function subs() {
+    const s = [["Adobe Creative Cloud", 24.19, "▲ sube 2,00 € desde octubre", false], ["Netflix", 13.99, "dos plataformas de cine con Filmin", true], ["Spotify", 11.99, "", false], ["GitHub Copilot", 10, "", false], ["Filmin", 8.99, "dos plataformas de cine con Netflix", true], ["iCloud+", 2.99, "", false]];
+    const total = s.reduce((a, b) => a + b[1], 0);
+    document.getElementById("subs").innerHTML = s.map(([n, v, note, grey]) => `<tr><td>${n}${note ? `<span class="note${grey ? " grey" : ""}">${note}</span>` : ""}</td><td class="r money-val">${eur(v)}</td></tr>`).join("") +
+      `<tfoot><tr><td>Al mes · al año</td><td class="r money-val">${eur(total)} · ${eur(total * 12)}</td></tr></tfoot>`;
+  })();
+
+  /* ---------- sparklines ---------- */
+  function spark(id, n, start, drift, noise) {
+    const svg = document.getElementById(id);
+    const pts = []; let v = start;
+    for (let i = 0; i < n; i++) { v += drift + (rnd() - .5) * noise; pts.push(v); }
+    const min = Math.min(...pts), max = Math.max(...pts);
+    const X = i => 2 + i * (290 / (n - 1)), Y = p => 54 - (p - min) / (max - min || 1) * 46;
+    for (let k = 0; k < 3; k++) el("line", { x1: 0, y1: 8 + k * 23, x2: 300, y2: 8 + k * 23, stroke: H.dim, "stroke-width": 1, "stroke-dasharray": "2 4" }, svg);
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(p).toFixed(1)}`).join("");
+    el("path", { d: d + `L${X(n - 1)} 58L${X(0)} 58Z`, fill: H.hud, "fill-opacity": .12, class: "fade" }, svg);
+    el("path", { d, fill: "none", stroke: H.hud, "stroke-width": 1.5, pathLength: 1, class: "draw glow" }, svg);
+    const ex = X(n - 1), ey = Y(pts[n - 1]);
+    el("rect", { x: ex - 3, y: ey - 3, width: 6, height: 6, fill: "none", stroke: H.hi, class: "ping" }, svg);
+    el("rect", { x: ex - 3, y: ey - 3, width: 6, height: 6, fill: H.hi, class: "fade" }, svg);
+  }
+  spark("sp-ig", 30, 4726, 2.9, 9);
+  spark("sp-yt", 28, 9, .08, 6);
+
+  /* ---------- mapa de contribuciones ---------- */
+  (function heat() {
+    const svg = document.getElementById("heat");
+    const s = 12, g = 2, x0 = 30, y0 = 18;
+    const op = [0, .25, .5, .75, 1];
+    const months = ["DIC", "ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV"];
+    months.forEach((mo, i) => label(svg, x0 + i * (52 / 12) * (s + g), 11, mo, { "font-size": 9.5 }));
+    ["L", "X", "V"].forEach((d, i) => label(svg, 4, y0 + (i * 2) * (s + g) + 10, d, { "font-size": 9.5 }));
+    for (let w = 0; w < 52; w++) for (let d = 0; d < 7; d++) {
+      const busy = w > 38 ? .75 : w > 20 && w < 30 ? .25 : .5;
+      let lvl = rnd() < busy ? Math.ceil(rnd() * 4) : 0;
+      if (d > 4 && rnd() < .5) lvl = 0;
+      if (w === 51 && d > 3) continue;
+      if (w >= 50 || (w === 49 && d >= 6)) lvl = Math.max(1, lvl);
+      el("rect", { x: x0 + w * (s + g), y: y0 + d * (s + g), width: s, height: s, fill: lvl ? H.hud : H.bg2, "fill-opacity": lvl ? op[lvl] : 1, class: "pop", style: `--i:${w}` }, svg);
+    }
+    el("rect", { x: x0 + 51 * (s + g) - 1.5, y: y0 + 3 * (s + g) - 1.5, width: s + 3, height: s + 3, fill: "none", stroke: H.hi, "stroke-width": 1.5, class: "blink" }, svg);
+  })();
+
+  /* ---------- pestaña recordada y primer conteo ---------- */
+  let start = tabs[0];
+  try { const saved = document.getElementById(localStorage.getItem("life-tab")); if (saved && tabs.includes(saved)) start = saved; } catch (e) {}
+  select(start);
+})();
+</script>
