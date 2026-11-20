@@ -149,8 +149,23 @@ button { font: inherit; }
 
 /* radar */
 .radar { display: grid; place-items: center; }
-.radar svg { width: 100%; max-width: 300px; height: auto; display: block; }
+.radar svg { width: 100%; max-width: 300px; height: auto; display: block; overflow: visible; }
 .sweep { transform-origin: 150px 150px; animation: sweep 6s linear infinite; }
+@keyframes radarIn { from { transform: scale(0); opacity: 0; } }
+.radar-shape { transform-origin: 150px 150px; animation: radarIn 1s cubic-bezier(.2, .8, .2, 1) both .2s; }
+#radar-hist { margin-top: var(--s2); }
+#radar-hist g { cursor: default; }
+.foot .btn { padding: 2px 9px; font-size: 10.5px; }
+.radar-form { display: grid; gap: 6px; }
+.rf-h { display: flex; justify-content: space-between; gap: var(--s2); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ph); }
+.rf-eje { display: grid; grid-template-columns: 6.5em 1fr 1.8em; gap: var(--s2); align-items: center; font-size: 11.5px; }
+.rf-eje .n { text-align: right; color: var(--hi); font-variant-numeric: tabular-nums; }
+.rf-eje .dato { grid-column: 2 / 4; font-size: 10px; color: var(--grid); margin: -2px 0 2px; }
+.rf-eje .dato b { color: var(--text); font-weight: 400; cursor: pointer; text-decoration: underline dotted; }
+.rf-eje input[type="range"] { appearance: none; height: 4px; background: var(--grid); outline: none; margin: 0; }
+.rf-eje input[type="range"]::-webkit-slider-thumb { appearance: none; width: 12px; height: 14px; background: var(--ph); box-shadow: var(--glow); cursor: pointer; }
+.radar-form input[type="text"] { font: inherit; background: var(--bg-2); color: var(--hi); border: 1px solid var(--grid); padding: 5px 8px; user-select: text; }
+.radar-form input[type="text"]:focus { outline: none; border-color: var(--ph); box-shadow: var(--glow); }
 .spin { transform-origin: 150px 150px; animation: spin 60s linear infinite; }
 
 /* animaciones de gráficas */
@@ -341,3 +356,4 @@ button { font: inherit; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .app::before { display: none; }
 }
+.foot .alarm { color: var(--alert); }

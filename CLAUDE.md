@@ -35,7 +35,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram hecha; YouTube montado pero oculto: `YOUTUBE = false` en `app.ts`) · 4 Parte del día y radar (Claude) · 5 Extras.
+0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram hecha; YouTube montado pero oculto: `YOUTUBE = false` en `app.ts`) · 4 Parte del día y radar (radar hecho; parte con Claude pendiente) · 5 Extras.
 
 ## Notas
 
@@ -46,6 +46,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 - Patrimonio (F3): cuenta (banco) + hucha + oro. Open Banking no da la hucha ni el oro. Hucha ≈ último saldo conocido (resumen del ejercicio o ajuste a mano, ajustes `hucha_saldo`/`hucha_fecha`) + traspasos internos posteriores + intereses estimados con su TIN (`hucha_tin`, neto del 19 % de retención) o, sin TIN, al ritmo del último mes (`huchaEstimada` en `app.ts`). Oro: onzas del resumen (`oro_onzas`, `oro_coste`) × precio en euros de `api.gold-api.com/price/XAU/EUR` (sin clave, cada hora). Colchón = cuenta + hucha, sin oro.
 - Instagram: las apps nuevas de Meta solo ofrecen «Unified login» (token de usuario del sistema, graph.facebook.com/v24.0, permisos `instagram_basic` e `instagram_manage_insights`, la cuenta sale de `/me/assigned_instagram_accounts`; exige porfolio empresarial). También acepta tokens `IGAA…` del antiguo «Instagram Login» (graph.instagram.com, LIFE los renueva cada 7 días). Token en `ig_token` (credenciales). Sincroniza cada hora; los seguidores por día los guarda LIFE en `metricas_diarias` (Meta solo da el número actual). `instagram_abrir` solo abre enlaces de instagram.com.
 - YouTube: YouTube Data API v3 + YouTube Analytics API, `youtube.readonly` y `yt-analytics.readonly`. OAuth de app de escritorio con PKCE: el navegador vuelve a `http://127.0.0.1:<puerto>` que LIFE escucha un momento. ID y secreto del cliente (`yt_client_id`, `yt_client_secret`) y token de renovación (`yt_refresh_token`) en las credenciales. La app de Google Cloud debe estar «publicada» o el permiso caduca a los 7 días. Sincroniza cada hora; suscriptores por día en `metricas_diarias`.
+- Radar de vida (Hoy): seis ejes (trabajo, dinero, creación, cuerpo, gente, descanso) del 0 al 10, una fila por semana ISO en la tabla `radar`. Sugerencias con datos en `sugerencias()` (`app.ts`): dinero por tasa de ahorro, trabajo por contribuciones de 7 días y encargos sin responder, creación por publicaciones de Instagram. Aviso de Windows el domingo desde las 19:00 si la semana no está puntuada.
 
 - El instalador (`LIFE_<versión>_x64-setup.exe`, NSIS, por usuario, sin permisos de administrador) no va a Git; se regenera con `npm run app:build`.
 - Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no.

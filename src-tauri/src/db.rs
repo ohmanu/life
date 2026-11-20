@@ -115,7 +115,45 @@ const MIGRATIONS: &[&str] = &[
        AND lower(descripcion) NOT LIKE '%ahorros%';
     DELETE FROM ajustes WHERE clave = 'banco_desde';
     ",
+    // 7 · radar de vida: una fila por semana (ISO, «2026-W47») con la nota de cada eje
+    "
+    CREATE TABLE radar (
+        semana   TEXT PRIMARY KEY,
+        valores  TEXT NOT NULL,         -- JSON {eje: 0..10}
+        nota     TEXT NOT NULL DEFAULT '',
+        guardado TEXT NOT NULL
+    );
+    ",
 ];
+
+// ── Radar de vida ─────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct Semana {
+    pub semana: String,
+    pub valores: HashMap<String, u8>,
+    pub nota: String,
+    pub guardado: String,
+}
+
+pub fn radar(conn: &Connection) -> rusqlite::Result<Vec<Semana>> {
+    let mut st = conn.prepare("SELECT semana, valores, nota, guardado FROM radar ORDER BY semana")?;
+    let rows = st.query_map([], |r| {
+        let json: String = r.get(1)?;
+        Ok(Semana { semana: r.get(0)?, valores: serde_json::from_str(&json).unwrap_or_default(), nota: r.get(2)?, guardado: r.get(3)? })
+    })?;
+    rows.collect()
+}
+
+pub fn guardar_semana(conn: &Connection, s: &Semana) -> rusqlite::Result<()> {
+    let json = serde_json::to_string(&s.valores).unwrap_or_else(|_| "{}".into());
+    conn.execute(
+        "INSERT INTO radar (semana, valores, nota, guardado) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(semana) DO UPDATE SET valores = excluded.valores, nota = excluded.nota, guardado = excluded.guardado",
+        params![s.semana, json, s.nota, s.guardado],
+    )?;
+    Ok(())
+}
 
 /// Cabecera de un SQLite sin cifrar. Un archivo cifrado empieza por bytes aleatorios.
 const PLAIN_HEADER: &[u8; 16] = b"SQLite format 3\0";
@@ -487,6 +525,25 @@ CARD_PAYMENT,Current,2026-11-10 10:00:00,,Nuevo,-2,0,EUR,COMPLETED,")).unwrap();
         assert_eq!(retirar_csv_solapado(&c).unwrap(), 1);
         let quedan: Vec<_> = movs(&c).unwrap().into_iter().map(|m| m.descripcion).collect();
         assert_eq!(quedan, vec!["Viejo", "Nuevo"], "el CSV anterior al banco se queda; el solapado se va");
+    }
+
+    #[test]
+    fn guarda_y_corrige_la_semana_del_radar() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = open(dir.path(), &new_key()).unwrap();
+        let mut s = Semana {
+            semana: "2026-W47".into(),
+            valores: [("trabajo".to_string(), 8u8), ("descanso".to_string(), 3)].into_iter().collect(),
+            nota: "Semana de bodas".into(),
+            guardado: "t".into(),
+        };
+        guardar_semana(&c, &s).unwrap();
+        s.valores.insert("descanso".into(), 5);
+        guardar_semana(&c, &s).unwrap();
+        let r = radar(&c).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].valores["descanso"], 5);
+        assert_eq!(r[0].nota, "Semana de bodas");
     }
 
     #[test]

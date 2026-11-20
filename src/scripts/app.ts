@@ -151,31 +151,208 @@ document.addEventListener("keydown", e => {
 });
 document.addEventListener("contextmenu", e => { if (TAURI && !(e.target as HTMLElement).closest("input")) e.preventDefault(); });
 
-/* ---------- radar (sin datos hasta la fase 4) ---------- */
-(function radar() {
+/* ---------- radar de vida ---------- */
+type Semana = { semana: string; valores: Record<string, number>; nota: string; guardado: string };
+const EJES: [string, string][] = [["trabajo", "TRABAJO"], ["dinero", "DINERO"], ["creacion", "CREACIÓN"], ["cuerpo", "CUERPO"], ["gente", "GENTE"], ["descanso", "DESCANSO"]];
+let radarState: Semana[] = [];
+
+/** Semana ISO («2026-W47») y sus lunes y domingo. */
+function semanaIso(d = new Date()) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dia = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - dia);
+  const y = t.getUTCFullYear();
+  const w = Math.ceil(((t.getTime() - Date.UTC(y, 0, 1)) / DIA + 1) / 7);
+  const lunes = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() || 7) - 1));
+  const domingo = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 6);
+  return { id: `${y}-W${pad(w)}`, w, lunes, domingo };
+}
+const semanaPrevia = (id: string) => radarState.filter(s => s.semana < id).pop();
+
+/** Sugerencias con datos para algunos ejes (la nota la pones tú). */
+function sugerencias(): Record<string, { valor: number; porque: string }> {
+  const out: Record<string, { valor: number; porque: string }> = {};
+  const clamp = (n: number) => Math.max(0, Math.min(10, Math.round(n)));
+  // Dinero: tasa de ahorro del mes en curso.
+  const meses = rvState.movimientos.length ? porMes(rvState.movimientos) : null;
+  const m = meses?.get(mesKey(new Date()));
+  if (m && m.ing > 0) {
+    const tasa = (m.ing - m.gas) / m.ing * 100;
+    out.dinero = { valor: tasa < 0 ? 2 : tasa < 10 ? 4 : tasa < 20 ? 6 : tasa < 30 ? 8 : 9, porque: `ahorro del mes ${fmt(tasa)} %` };
+  }
+  // Trabajo: contribuciones de GitHub en 7 días y encargos sin responder a tiempo.
+  const gh = ghState.snapshot;
+  if (gh) {
+    const c7 = gh.days.slice(-7).reduce((s, d) => s + d.count, 0);
+    const tarde = gmState.encargos.filter(e => tarde_(e)).length;
+    out.trabajo = { valor: clamp((c7 === 0 ? 3 : c7 < 5 ? 5 : c7 < 15 ? 7 : 8) - (tarde ? 1 : 0)), porque: `${c7} contribuciones en 7 d${tarde ? ` · ${tarde} encargo${tarde === 1 ? "" : "s"} sin responder` : ""}` };
+  }
+  // Creación: publicaciones de Instagram en 7 días.
+  const ig = igState.snapshot;
+  if (ig) {
+    const p7 = ig.posts.filter(p => p.product !== "STORY" && Date.now() - new Date(p.timestamp).getTime() < 7 * DIA).length;
+    out.creacion = { valor: p7 === 0 ? 3 : p7 === 1 ? 6 : p7 === 2 ? 7 : 8, porque: `${p7} publicaci${p7 === 1 ? "ón" : "ones"} en Instagram en 7 d` };
+  }
+  return out;
+}
+// tarde() se define con los encargos; este alias evita depender del orden del archivo.
+const tarde_ = (e: Encargo) => sinResponder(e) && hoursSince(e.recibido) > LIMITE_H;
+
+function dibujarRadar() {
   const svg = $("radar") as unknown as SVGSVGElement;
-  const cx = 150, cy = 150, R = 105;
-  const axes = ["TRABAJO", "DINERO", "CREACIÓN", "CUERPO", "GENTE", "DESCANSO"];
-  const pt = (i: number, v: number) => { const a = -Math.PI / 2 + i * 2 * Math.PI / axes.length; return [cx + Math.cos(a) * R * v / 10, cy + Math.sin(a) * R * v / 10]; };
+  svg.replaceChildren();
+  const cx = 150, cy = 150, R = 105, n = EJES.length;
+  const pt = (i: number, v: number) => { const a = -Math.PI / 2 + i * 2 * Math.PI / n; return [cx + Math.cos(a) * R * v / 10, cy + Math.sin(a) * R * v / 10]; };
   const spin = svgEl("g", { class: "spin" }, svg);
   for (let d = 0; d < 360; d += 10) {
     const a = d * Math.PI / 180, r1 = R + 6, r2 = R + (d % 30 ? 9 : 13);
     svgEl("line", { x1: cx + Math.cos(a) * r1, y1: cy + Math.sin(a) * r1, x2: cx + Math.cos(a) * r2, y2: cy + Math.sin(a) * r2, stroke: K.grid, "stroke-width": 1 }, spin);
   }
   for (let k = 1; k <= 5; k++) svgEl("circle", { cx, cy, r: R * k / 5, fill: "none", stroke: K.grid, "stroke-width": k === 5 ? 1.2 : .7 }, svg);
-  axes.forEach((a, i) => {
+  const actual = semanaIso().id;
+  const cur = radarState.find(s => s.semana === actual) ?? radarState[radarState.length - 1];
+  const prev = cur ? semanaPrevia(cur.semana) : undefined;
+  EJES.forEach(([k, nombre], i) => {
     const [x, y] = pt(i, 10);
     svgEl("line", { x1: cx, y1: cy, x2: x, y2: y, stroke: K.grid, "stroke-width": .7 }, svg);
     const [lx, ly] = pt(i, 13.4);
-    label(svg, lx, ly + 4, a, { "text-anchor": "middle", fill: K.text, "letter-spacing": 1 });
+    const t = label(svg, lx, ly + 4, nombre, { "text-anchor": "middle", fill: K.text, "letter-spacing": 1 });
+    if (cur) {
+      const v = cur.valores[k] ?? 0, p = prev?.valores[k];
+      t.textContent = `${nombre} ${v}`;
+      if (p !== undefined && v - p <= -2) t.setAttribute("fill", K.alert);
+    }
   });
   const sw = svgEl("g", { class: "sweep" }, svg);
   const ex = cx - R * Math.sin(Math.PI / 5), ey = cy - R * Math.cos(Math.PI / 5);
   svgEl("path", { d: `M${cx} ${cy}L${cx} ${cy - R}A${R} ${R} 0 0 0 ${ex} ${ey}Z`, fill: K.ph, opacity: .14 }, sw);
   svgEl("line", { x1: cx, y1: cy, x2: cx, y2: cy - R, stroke: K.ph, "stroke-width": 1.2, opacity: .85 }, sw);
-  svgEl("circle", { cx, cy, r: 2.5, fill: K.ph }, svg);
-  label(svg, cx, cy + 22, "SIN SEÑAL", { "text-anchor": "middle", fill: K.ph, class: "blink", "letter-spacing": 2 });
-})();
+  if (!cur) {
+    svgEl("circle", { cx, cy, r: 2.5, fill: K.ph }, svg);
+    label(svg, cx, cy + 22, "SIN SEÑAL", { "text-anchor": "middle", fill: K.ph, class: "blink", "letter-spacing": 2 });
+  } else {
+    const poly = (s: Semana) => EJES.map(([k], i) => pt(i, s.valores[k] ?? 0).join(",")).join(" ");
+    if (prev) svgEl("polygon", { points: poly(prev), fill: "none", stroke: K.text, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: .6 }, svg);
+    const g = svgEl("g", { class: "radar-shape" }, svg);
+    svgEl("polygon", { points: poly(cur), fill: K.ph, "fill-opacity": .22, stroke: K.ph, "stroke-width": 1.6, class: "glow" }, g);
+    EJES.forEach(([k], i) => { const [x, y] = pt(i, cur.valores[k] ?? 0); svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.hi }, g); });
+  }
+  svg.setAttribute("aria-label", cur ? `Radar de vida, ${cur.semana}: ` + EJES.map(([k, n]) => `${n.toLowerCase()} ${cur.valores[k]}`).join(", ") : "Radar de vida sin datos todavía");
+
+  // Pie: semana mostrada y el eje que más cambió.
+  const foot = $("radar-foot");
+  if (!cur) { foot.textContent = "SIN SEÑAL · PUNTÚA TU SEMANA"; foot.className = ""; }
+  else {
+    const num = cur.semana.slice(6);
+    let txt = `SEMANA ${+num}${cur.semana === actual ? "" : " · LA ÚLTIMA"}`;
+    let alarma = false;
+    if (prev) {
+      const cambios = EJES.map(([k, nm]) => [nm, (cur.valores[k] ?? 0) - (prev.valores[k] ?? 0)] as [string, number]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      const [nm, d] = cambios[0];
+      if (d) { txt += ` · ${nm} ${d > 0 ? "↑" : "↓"} ${Math.abs(d)}`; alarma = d <= -2; }
+    }
+    foot.textContent = txt;
+    foot.className = alarma ? "alarm" : "";
+  }
+  $("radar-edit").textContent = radarState.some(s => s.semana === actual) ? "Corregir semana" : "Puntuar semana";
+  historial();
+}
+
+/** La forma de las últimas 8 semanas, en pequeño. */
+function historial() {
+  const svg = $("radar-hist") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  const ult = radarState.slice(-8);
+  if (!ult.length) return;
+  const w = 300 / 8, r = 15;
+  ult.forEach((s, j) => {
+    const cx = (8 - ult.length + j) * w + w / 2, cy = 20;
+    const g = svgEl("g", {}, svg);
+    svgEl("circle", { cx, cy, r, fill: "none", stroke: K.grid, "stroke-width": .6 }, g);
+    const pts = EJES.map(([k], i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / EJES.length, v = (s.valores[k] ?? 0) / 10; return `${cx + Math.cos(a) * r * v},${cy + Math.sin(a) * r * v}`; }).join(" ");
+    svgEl("polygon", { points: pts, fill: K.ph, "fill-opacity": j === ult.length - 1 ? .5 : .2, stroke: K.ph, "stroke-width": .8 }, g);
+    label(g, cx, 43, `S${+s.semana.slice(6)}`, { "text-anchor": "middle", "font-size": 7.5 });
+    g.appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${s.semana}: ${EJES.map(([k, n]) => `${n.toLowerCase()} ${s.valores[k]}`).join(", ")}${s.nota ? ` · ${s.nota}` : ""}` }));
+  });
+}
+
+function abrirRadar() {
+  const sem = semanaIso();
+  const guardada = radarState.find(s => s.semana === sem.id);
+  const base = guardada ?? semanaPrevia(sem.id);
+  const sug = sugerencias();
+  const fmtD = (d: Date) => `${d.getDate()} ${MESES[d.getMonth()].toLowerCase()}`;
+  $("rf-semana").textContent = `Semana ${sem.w} · ${fmtD(sem.lunes)} – ${fmtD(sem.domingo)}`;
+  $("rf-ejes").innerHTML = EJES.map(([k, nombre]) => {
+    const v = guardada?.valores[k] ?? sug[k]?.valor ?? base?.valores[k] ?? 5;
+    const s = sug[k];
+    return `<div class="rf-eje"><label for="rf-${k}">${nombre[0] + nombre.slice(1).toLowerCase()}</label>
+      <input type="range" id="rf-${k}" min="0" max="10" step="1" value="${v}" data-eje="${k}" />
+      <span class="n" id="rf-${k}-n">${v}</span>
+      ${s ? `<span class="dato">dato: <b data-sug="${k}" data-v="${s.valor}">${s.valor}</b> · ${esc(s.porque)}</span>` : ""}</div>`;
+  }).join("");
+  $<HTMLInputElement>("rf-nota").value = guardada?.nota ?? "";
+  $("rf-msg").textContent = "";
+  $("radar-vista").hidden = true;
+  $("radar-form").hidden = false;
+}
+function cerrarRadar() { $("radar-form").hidden = true; $("radar-vista").hidden = false; }
+
+$("radar-edit").addEventListener("click", () => ($("radar-form").hidden ? abrirRadar() : cerrarRadar()));
+$("rf-cancel").addEventListener("click", cerrarRadar);
+$("rf-ejes").addEventListener("input", e => {
+  const i = e.target as HTMLInputElement;
+  if (i.dataset.eje) $(`rf-${i.dataset.eje}-n`).textContent = i.value;
+});
+$("rf-ejes").addEventListener("click", e => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>("[data-sug]");
+  if (!b) return;
+  const i = $<HTMLInputElement>(`rf-${b.dataset.sug}`);
+  i.value = b.dataset.v!;
+  $(`rf-${b.dataset.sug}-n`).textContent = i.value;
+});
+$("radar-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const valores: Record<string, number> = {};
+  EJES.forEach(([k]) => (valores[k] = +$<HTMLInputElement>(`rf-${k}`).value));
+  const semana = semanaIso().id, nota = $<HTMLInputElement>("rf-nota").value;
+  if (!TAURI) {
+    radarState = [...radarState.filter(s => s.semana !== semana), { semana, valores, nota, guardado: new Date().toISOString() }].sort((a, b) => a.semana.localeCompare(b.semana));
+    cerrarRadar(); dibujarRadar(); brief(); return;
+  }
+  const btn = $<HTMLButtonElement>("rf-save");
+  btn.disabled = true;
+  try { radarState = await invoke<Semana[]>("radar_guardar", { semana, valores, nota }); cerrarRadar(); dibujarRadar(); brief(); }
+  catch (err) { const m = $("rf-msg"); m.textContent = String(err); m.className = "msg err"; }
+  finally { btn.disabled = false; }
+});
+
+function briefRadar(lines: string[]) {
+  const sem = semanaIso();
+  const hecha = radarState.some(s => s.semana === sem.id);
+  const dia = new Date().getDay();
+  if (!hecha && (dia === 0 || dia === 6)) {
+    lines.push(`<span class="hot">Fin de semana:</span> un minuto para puntuar tu semana en el <b>radar</b>.`);
+    return;
+  }
+  const cur = radarState[radarState.length - 1];
+  const prev = cur ? semanaPrevia(cur.semana) : undefined;
+  if (!cur || !prev) return;
+  const bajan = EJES.filter(([k]) => (cur.valores[k] ?? 0) - (prev.valores[k] ?? 0) <= -2).map(([, n]) => n.toLowerCase());
+  if (bajan.length) lines.push(`Radar: <span class="alarm">${bajan.join(" y ")} ${bajan.length === 1 ? "baja" : "bajan"}</span> 2 puntos o más respecto a la semana anterior.`);
+}
+
+function demoRadar(): Semana[] {
+  const out: Semana[] = [];
+  const hoy = new Date();
+  for (let i = 7; i >= 1; i--) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - i * 7);
+    const f = (b: number, a: number) => Math.max(0, Math.min(10, Math.round(b + Math.sin(i * a) * 2)));
+    out.push({ semana: semanaIso(d).id, valores: { trabajo: f(7, 1.3), dinero: f(6, .7), creacion: f(6, 2.1), cuerpo: f(4, 1.7), gente: f(5, .9), descanso: f(i === 1 ? 6 : 5, 2.5) }, nota: "", guardado: d.toISOString() });
+  }
+  out[out.length - 1].valores.descanso = 3;
+  return out;
+}
 
 /* ---------- GitHub: pintar ---------- */
 function setText(key: string, value: string) {
@@ -261,6 +438,7 @@ function brief() {
     briefDinero(lines);
     briefInstagram(lines);
     if (YOUTUBE) briefYouTube(lines);
+    briefRadar(lines);
     briefGitHub(lines);
     const html = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
     if (html !== briefHtml) { $("brief").innerHTML = html; briefHtml = html; }
@@ -1463,13 +1641,15 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); return; }
+  if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); return; }
   if (YOUTUBE) {
     try { renderYouTube(await invoke<YtView>("youtube_status")); }
     catch (e) { ytMsg(String(e), "err"); }
   }
   try { renderInstagram(await invoke<Status<Instagram>>("instagram_status")); }
   catch (e) { igMsg(String(e), "err"); }
+  try { radarState = await invoke<Semana[]>("radar_status"); } catch { radarState = []; }
+  dibujarRadar();
   try { renderDinero(await invoke<Dinero>("dinero_status")); }
   catch (e) { rvMsg(String(e), "err"); }
   try { renderGmail(await invoke<Gmail>("gmail_status")); }

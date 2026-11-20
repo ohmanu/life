@@ -234,6 +234,66 @@ fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
     db::delete_snapshot(&conn, "instagram").map_err(|e| e.to_string())
 }
 
+// ── Radar de vida ─────────────────────────────────────────────────────────
+
+const EJES: [&str; 6] = ["trabajo", "dinero", "creacion", "cuerpo", "gente", "descanso"];
+
+/// Semana ISO de hoy, «2026-W47».
+fn semana_iso(d: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    let w = d.iso_week();
+    format!("{}-W{:02}", w.year(), w.week())
+}
+
+#[tauri::command]
+fn radar_status(app: AppHandle) -> Result<Vec<db::Semana>, String> {
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::radar(&conn).map_err(|e| e.to_string())
+}
+
+/// Guarda (o corrige) la autoevaluación de una semana: nota de 0 a 10 por eje y una línea.
+#[tauri::command]
+fn radar_guardar(app: AppHandle, semana: String, valores: std::collections::HashMap<String, u8>, nota: String) -> Result<Vec<db::Semana>, String> {
+    let bien = semana.len() == 8 && semana.as_bytes()[4] == b'-' && semana.as_bytes()[5] == b'W';
+    if !bien {
+        return Err("Semana no válida.".into());
+    }
+    if valores.len() != EJES.len() || !EJES.iter().all(|e| valores.get(*e).is_some_and(|v| *v <= 10)) {
+        return Err("Puntúa los seis ejes del 0 al 10.".into());
+    }
+    let nota: String = nota.trim().chars().take(280).collect();
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let s = db::Semana { semana, valores, nota, guardado: gmail::utc(chrono::Utc::now()) };
+    db::guardar_semana(&conn, &s).map_err(|e| e.to_string())?;
+    db::radar(&conn).map_err(|e| e.to_string())
+}
+
+/// Domingo desde las 19:00: si la semana no está puntuada, un aviso de Windows (una vez).
+fn avisar_radar(app: &AppHandle) -> Result<(), String> {
+    use chrono::{Datelike, Timelike};
+    use tauri_plugin_notification::NotificationExt;
+    let ahora = chrono::Local::now();
+    if ahora.weekday() != chrono::Weekday::Sun || ahora.hour() < 19 {
+        return Ok(());
+    }
+    let semana = semana_iso(ahora.date_naive());
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let hecha = db::radar(&conn).map_err(|e| e.to_string())?.iter().any(|s| s.semana == semana);
+    if hecha || db::ajuste(&conn, "aviso_radar").map_err(|e| e.to_string())?.as_deref() == Some(semana.as_str()) {
+        return Ok(());
+    }
+    let _ = app
+        .notification()
+        .builder()
+        .title("Radar de vida")
+        .body("Es domingo: un minuto para puntuar tu semana en LIFE.")
+        .show();
+    db::set_ajuste(&conn, "aviso_radar", &semana).map_err(|e| e.to_string())
+}
+
 // ── YouTube ───────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1042,6 +1102,7 @@ fn dinero_borrar(app: AppHandle) -> Result<DineroView, String> {
 }
 
 async fn sync_all(app: &AppHandle, github_too: bool) {
+    let _ = avisar_radar(app);
     // Precio del oro cada hora, solo si tienes oro.
     let tiene_oro = {
         let state = app.state::<Db>();
@@ -1198,8 +1259,20 @@ pub fn run() {
             youtube_conectar,
             youtube_sync,
             youtube_disconnect,
-            youtube_abrir
+            youtube_abrir,
+            radar_status,
+            radar_guardar
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn semana_iso_cruza_el_año() {
+        let d = |y, m, dd| chrono::NaiveDate::from_ymd_opt(y, m, dd).unwrap();
+        assert_eq!(super::semana_iso(d(2026, 11, 21)), "2026-W47");
+        assert_eq!(super::semana_iso(d(2027, 1, 1)), "2026-W53");
+    }
 }

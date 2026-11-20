@@ -64,8 +64,16 @@ const tabs = [
             </div>
             <div class="cell c-5">
               <div class="cell-h"><h3>Radar de vida</h3><span class="jp">生活レーダー</span></div>
-              <div class="radar"><svg id="radar" viewBox="0 0 300 300" role="img" aria-label="Radar de vida sin datos todavía"></svg></div>
-              <div class="foot"><span>SIN SEÑAL · AUTOEVALUACIÓN EN LA FASE 4</span><span>6 EJES</span></div>
+              <div class="radar" id="radar-vista"><svg id="radar" viewBox="0 0 300 300" role="img" aria-label="Radar de vida"></svg></div>
+              <form class="radar-form" id="radar-form" hidden>
+                <div class="rf-h"><span id="rf-semana"></span><span class="muted">0 = fatal · 10 = genial</span></div>
+                <div id="rf-ejes"></div>
+                <input id="rf-nota" type="text" maxlength="280" placeholder="Una línea sobre la semana (opcional)" aria-label="Nota de la semana" spellcheck="true" />
+                <div class="field"><button class="btn solid" type="submit" id="rf-save">Guardar</button><button class="btn" type="button" id="rf-cancel">Cancelar</button></div>
+                <div class="msg" id="rf-msg" role="status"></div>
+              </form>
+              <svg class="heat-svg" id="radar-hist" viewBox="0 0 300 44" role="img" aria-label="Forma del radar en las últimas semanas"></svg>
+              <div class="foot"><span id="radar-foot">SIN SEÑAL</span><button class="btn" type="button" id="radar-edit">Puntuar semana</button></div>
             </div>
             <div class="cell c-12">
               <div class="kpis five">
