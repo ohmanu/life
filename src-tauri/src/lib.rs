@@ -2,6 +2,7 @@ mod banco;
 mod db;
 mod github;
 mod gmail;
+mod instagram;
 mod revolut;
 mod secrets;
 
@@ -105,6 +106,129 @@ fn github_disconnect(app: AppHandle) -> Result<(), String> {
     let state = app.state::<Db>();
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::delete_snapshot(&conn, "github").map_err(|e| e.to_string())
+}
+
+// ── Instagram ─────────────────────────────────────────────────────────────
+
+/// Seguidores por día que LIFE ha ido guardando (Meta solo da el número de hoy).
+fn ig_historia(conn: &rusqlite::Connection) -> Vec<instagram::Dia> {
+    let Ok(mut st) = conn.prepare(
+        "SELECT fecha, valor FROM metricas_diarias WHERE fuente = 'instagram' AND clave = 'seguidores' ORDER BY fecha",
+    ) else {
+        return Vec::new();
+    };
+    st.query_map([], |r| Ok(instagram::Dia { fecha: r.get(0)?, valor: r.get::<_, f64>(1)? as i64 }))
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
+/// Renueva el token cada 7 días (dura 60) y descarga perfil, publicaciones y estadísticas.
+async fn sync_instagram(app: &AppHandle) -> Result<instagram::Snapshot, String> {
+    let mut token = secrets::get(instagram::TOKEN)?.ok_or("Instagram no está conectado.")?;
+    let renovar = {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::ajuste(&conn, "ig_renovado")
+            .map_err(|e| e.to_string())?
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::days(7))
+    };
+    if renovar {
+        match instagram::renovar(&token).await {
+            Ok(nuevo) => {
+                secrets::set(instagram::TOKEN, &nuevo)?;
+                token = nuevo;
+                let state = app.state::<Db>();
+                let conn = state.0.lock().map_err(|e| e.to_string())?;
+                db::set_ajuste(&conn, "ig_renovado", &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())?;
+            }
+            // Un token recién creado (menos de 24 h) aún no se puede renovar: se intenta otro día.
+            Err(e) => log::info!("instagram: sin renovar el token ({e})"),
+        }
+    }
+    let result = instagram::fetch(&token).await;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    match result {
+        Ok(mut snap) => {
+            let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let _ = conn.execute(
+                "INSERT INTO metricas_diarias (fuente, clave, fecha, valor) VALUES ('instagram', 'seguidores', ?1, ?2)
+                 ON CONFLICT(fuente, clave, fecha) DO UPDATE SET valor = excluded.valor",
+                rusqlite::params![hoy, snap.followers],
+            );
+            snap.historia = ig_historia(&conn);
+            let json = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
+            db::save_snapshot(&conn, "instagram", &json, &snap.synced_at).map_err(|e| e.to_string())?;
+            db::log_sync(&conn, "instagram", true, None);
+            drop(conn);
+            let _ = app.emit("instagram-updated", &snap);
+            Ok(snap)
+        }
+        Err(e) => {
+            db::log_sync(&conn, "instagram", false, Some(&e));
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+fn instagram_status(app: AppHandle) -> Result<SourceStatus<instagram::Snapshot>, String> {
+    let connected = secrets::get(instagram::TOKEN)?.is_some();
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let snapshot = db::snapshot(&conn, "instagram")
+        .map_err(|e| e.to_string())?
+        .and_then(|j| serde_json::from_str::<instagram::Snapshot>(&j).ok())
+        .map(|mut s| {
+            s.historia = ig_historia(&conn);
+            s
+        });
+    Ok(SourceStatus { connected, snapshot })
+}
+
+/// Comprueba el token contra Instagram antes de guardarlo.
+#[tauri::command]
+async fn instagram_connect(app: AppHandle, token: String) -> Result<instagram::Snapshot, String> {
+    let token: String = token.split_whitespace().collect();
+    if token.len() < 20 {
+        return Err("Pega el token de Instagram.".into());
+    }
+    instagram::fetch(&token).await?;
+    secrets::set(instagram::TOKEN, &token)?;
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        // Recién generado: se renovará dentro de una semana.
+        db::set_ajuste(&conn, "ig_renovado", &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())?;
+    }
+    sync_instagram(&app).await
+}
+
+#[tauri::command]
+async fn instagram_sync(app: AppHandle) -> Result<instagram::Snapshot, String> {
+    sync_instagram(&app).await
+}
+
+/// Abre una publicación en el navegador. Solo enlaces de instagram.com.
+#[tauri::command]
+fn instagram_abrir(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let u: tauri::Url = url.parse().map_err(|_| "Enlace no válido.".to_string())?;
+    if u.scheme() != "https" || !matches!(u.host_str(), Some("www.instagram.com" | "instagram.com")) {
+        return Err("Solo se abren enlaces de instagram.com.".into());
+    }
+    app.opener().open_url(u.as_str(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Borra el token. El historial de seguidores se queda en life.db.
+#[tauri::command]
+fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
+    secrets::delete(instagram::TOKEN)?;
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let _ = conn.execute("DELETE FROM ajustes WHERE clave = 'ig_renovado'", []);
+    db::delete_snapshot(&conn, "instagram").map_err(|e| e.to_string())
 }
 
 // ── Gmail · encargos ──────────────────────────────────────────────────────
@@ -824,6 +948,11 @@ async fn sync_all(app: &AppHandle, github_too: bool) {
             log::warn!("gmail: {e}");
         }
     }
+    if github_too && matches!(secrets::get(instagram::TOKEN), Ok(Some(_))) {
+        if let Err(e) = sync_instagram(app).await {
+            log::warn!("instagram: {e}");
+        }
+    }
     if github_too && matches!(secrets::get(github::TOKEN), Ok(Some(_))) {
         if let Err(e) = sync_github(app).await {
             log::warn!("github: {e}");
@@ -926,7 +1055,12 @@ pub fn run() {
             banco_conectar,
             banco_sync,
             banco_desconectar,
-            patrimonio_ajustar
+            patrimonio_ajustar,
+            instagram_status,
+            instagram_connect,
+            instagram_sync,
+            instagram_disconnect,
+            instagram_abrir
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");

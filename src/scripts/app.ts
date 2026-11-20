@@ -242,6 +242,7 @@ function brief() {
   } else {
     lines.push(connected ? "GitHub conectado. Sincronizando…" : `GitHub sin conectar. Ve a <b>F5 · Conexiones</b> y pega un token de solo lectura.`);
   }
+  briefInstagram(lines);
   briefDinero(lines);
   const ul = $("brief");
   ul.innerHTML = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
@@ -418,6 +419,188 @@ $("ficha").addEventListener("click", async e => {
     catch (err) { encMsg(String(err), "err"); }
   }
 });
+
+/* ---------- instagram ---------- */
+type IgPost = {
+  id: string; caption: string; media_type: string; product: string; timestamp: string; permalink: string;
+  likes: number | null; comments: number | null; reach: number | null; views: number | null; saved: number | null; shares: number | null;
+};
+type IgDia = { fecha: string; valor: number };
+type Instagram = {
+  username: string; name: string | null; followers: number; follows: number; media_count: number; posts: IgPost[];
+  reach: IgDia[]; reach_30: number | null; views_30: number | null; engaged_30: number | null; interactions_30: number | null;
+  online: number[]; historia: IgDia[]; synced_at: string;
+};
+let igState: Status<Instagram> = { connected: false, snapshot: null };
+
+const setI = (key: string, value: string) => document.querySelectorAll<HTMLElement>(`[data-i="${key}"]`).forEach(n => (n.textContent = value));
+const num = (n: number | null | undefined) => (n === null || n === undefined ? "—" : fmt(n));
+const TIPO_IG: Record<string, string> = { REELS: "REEL", FEED: "POST", STORY: "STORY", AD: "ANUNCIO" };
+
+/** Seguidores ganados en ~30 días según la historia que guarda LIFE. */
+function igDelta(ig: Instagram) {
+  const h = ig.historia;
+  if (h.length < 2) return null;
+  const limite = new Date(Date.now() - 30 * DIA);
+  const ref = h.find(d => new Date(d.fecha + "T00:00:00") >= limite) ?? h[0];
+  const dias = Math.max(1, Math.round((Date.now() - new Date(ref.fecha + "T00:00:00").getTime()) / DIA));
+  return { delta: ig.followers - ref.valor, dias };
+}
+
+function igChart(ig: Instagram | null) {
+  const svg = $("ig-chart") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  if (!ig || !ig.reach.length) { label(svg, 10, 75, ig ? "SIN ESTADÍSTICAS DE ALCANCE TODAVÍA" : "SIN DATOS · CONECTA INSTAGRAM EN F5", { fill: K.grid }); return; }
+  const l = 40, r = 552, top = 14, base = 122, n = ig.reach.length, gw = (r - l) / n, bw = Math.max(2, gw * .62);
+  const max = Math.max(1, ...ig.reach.map(d => d.valor));
+  for (let k = 0; k <= 2; k++) {
+    const v = max * k / 2, y = base - v / max * (base - top);
+    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.grid, "stroke-width": 1, "stroke-dasharray": k ? "2 4" : "" }, svg);
+    label(svg, l - 6, y + 3, fmt(Math.round(v)), { "text-anchor": "end", "font-size": 9 });
+  }
+  ig.reach.forEach((d, i) => {
+    const h = d.valor / max * (base - top), x = l + i * gw + (gw - bw) / 2;
+    const rect = svgEl("rect", { x, y: base - h, width: bw, height: Math.max(h, d.valor ? 1 : 0), fill: K.ph, "fill-opacity": i === n - 1 ? 1 : .55, class: "grow", style: `--i:${i}` }, svg);
+    rect.appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${d.fecha} · alcance ${fmt(d.valor)}` }));
+    if ((i % 7 === 0 && n - 1 - i >= 4) || i === n - 1) label(svg, x + bw / 2, base + 14, ddmm(new Date(d.fecha + "T00:00:00")), { "text-anchor": "middle", "font-size": 9 });
+  });
+  // Seguidores (historia de LIFE) en su propia escala, solo dentro de la ventana del gráfico.
+  const desde = ig.reach[0].fecha;
+  const hist = ig.historia.filter(d => d.fecha >= desde);
+  if (hist.length >= 2) {
+    const mn = Math.min(...hist.map(d => d.valor)), mx = Math.max(...hist.map(d => d.valor));
+    const X = (f: string) => l + (Math.max(0, Math.round((new Date(f + "T00:00:00").getTime() - new Date(desde + "T00:00:00").getTime()) / DIA)) + .5) * gw;
+    const Y = (v: number) => base - 10 - (v - mn + 1) / (mx - mn + 2) * (base - top - 20);
+    const pts = hist.map(d => `${X(d.fecha)},${Y(d.valor)}`).join(" ");
+    svgEl("polyline", { points: pts, fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
+  }
+  label(svg, r, top - 2, "BARRAS: ALCANCE DIARIO · LÍNEA: SEGUIDORES", { "text-anchor": "end", "font-size": 8.5 });
+}
+
+function igHoras(ig: Instagram | null) {
+  const el = $("ig-horas");
+  if (!ig || !ig.online.length) { el.innerHTML = ig ? `<span class="lbl-h">Mejor hora</span><span style="grid-column: span 24; text-align:left">Instagram la da con 100 seguidores o más.</span>` : ""; return; }
+  const max = Math.max(...ig.online);
+  const top = ig.online.indexOf(max);
+  el.innerHTML = `<span class="lbl-h">Conectados</span>` + ig.online.map((v, h) => `<i class="${h === top ? "top" : ""}" style="height:${4 + v / max * 22}px" title="${pad(h)}:00 · ${fmt(v)}"></i>`).join("")
+    + `<span class="lbl-h"></span>` + ig.online.map((_, h) => `<span>${h % 3 === 0 ? pad(h) : ""}</span>`).join("");
+  el.setAttribute("aria-label", `Hora con más seguidores conectados: ${pad(top)}:00`);
+}
+
+function igPosts(ig: Instagram | null) {
+  const el = $("ig-posts");
+  const posts = ig?.posts ?? [];
+  $("ig-posts-n").textContent = ig ? `${fmt(ig.media_count)} EN TOTAL` : "";
+  if (!posts.length) { el.innerHTML = `<p class="muted">${ig ? "Sin publicaciones." : "Conecta Instagram en F5."}</p>`; return; }
+  const best = (k: keyof IgPost) => Math.max(0, ...posts.map(p => (p[k] as number | null) ?? 0));
+  const tops = { reach: best("reach"), views: best("views"), likes: best("likes") };
+  const cell = (v: number | null, top?: number) => `<span class="n${top && v && v === top ? " best" : ""}">${num(v)}</span>`;
+  el.innerHTML = `<div class="post head"><span>Fecha</span><span>Tipo</span><span>Texto</span><span class="n">Alcance</span><span class="n">Vistas</span><span class="n">Me gusta</span><span class="n">Coment.</span><span class="n">Guard.</span><span class="n">Compart.</span></div>`
+    + posts.map(p => `<div class="post">
+      <span class="muted">${ddmm(new Date(p.timestamp))}.${new Date(p.timestamp).getFullYear() % 100}</span>
+      <span class="tp">${TIPO_IG[p.product] ?? esc(p.media_type)}</span>
+      <a class="tx" href="#" data-url="${esc(p.permalink)}" title="${esc(p.caption || "Sin texto")}">${esc(p.caption || "Sin texto")}</a>
+      ${cell(p.reach, tops.reach)}${cell(p.views, tops.views)}${cell(p.likes, tops.likes)}${cell(p.comments)}${cell(p.saved)}${cell(p.shares)}
+    </div>`).join("");
+}
+
+function briefInstagram(lines: string[]) {
+  const ig = igState.snapshot;
+  if (!ig) { if (igState.connected) lines.push("Instagram conectado. Sincronizando…"); return; }
+  const d = igDelta(ig);
+  const ultimo = ig.posts.find(p => p.product !== "STORY");
+  lines.push(`Instagram: <b>${fmt(ig.followers)}</b> seguidores${d && d.delta ? ` (<span class="hot">${d.delta > 0 ? "+" : ""}${fmt(d.delta)}</span> en ${d.dias} d)` : ""}`
+    + (ig.reach_30 !== null ? ` · alcance de <b>${fmt(ig.reach_30)}</b> en 30 días` : "")
+    + (ultimo ? `. Última publicación ${rel(ultimo.timestamp)}${ultimo.reach !== null ? `: alcance <b>${fmt(ultimo.reach)}</b>` : ""}.` : "."));
+}
+
+function renderInstagram(st: Status<Instagram>) {
+  igState = st;
+  const ig = st.snapshot;
+  const d = ig ? igDelta(ig) : null;
+  $("ig-h").textContent = ig ? `Instagram · @${ig.username}` : "Instagram";
+  setI("seg", ig ? fmt(ig.followers) : "—");
+  setI("seg_d", ig ? (d ? `${d.delta >= 0 ? "+" : ""}${fmt(d.delta)} en ${d.dias} d · sigues a ${fmt(ig.follows)}` : `sigues a ${fmt(ig.follows)} · historia desde hoy`) : st.connected ? "sincronizando…" : "conecta Instagram en F5");
+  setI("reach", ig ? num(ig.reach_30) : "—");
+  setI("reach_d", ig && ig.engaged_30 !== null ? `${fmt(ig.engaged_30)} cuentas interactuaron` : "");
+  setI("views", ig ? num(ig.views_30) : "—");
+  setI("views_d", ig ? `${fmt(ig.media_count)} publicaciones` : "");
+  setI("inter", ig ? num(ig.interactions_30) : "—");
+  const top = ig && ig.online.length ? ig.online.indexOf(Math.max(...ig.online)) : -1;
+  setI("inter_d", top >= 0 ? `mejor hora: ${pad(top)}:00` : "");
+  igChart(ig);
+  igHoras(ig);
+  igPosts(ig);
+  $("ig-sync").textContent = ig ? `SINCRONIZADO ${stamp(ig.synced_at)}` : st.connected ? "SINCRONIZANDO…" : "SIN CONECTAR";
+
+  const src = $("src-instagram");
+  src.className = "src" + (st.connected ? " on" : "");
+  src.lastChild!.textContent = st.connected ? (ig ? `Instagram · @${ig.username}` : "Instagram") : "Instagram · sin conectar";
+  $("ig-state").textContent = st.connected ? `Conectado${ig ? ` · @${ig.username}` : ""}` : "Sin conectar";
+  $("ig-state").className = "state" + (st.connected ? " on" : "");
+  $("ig-form").hidden = st.connected;
+  $("ig-help").hidden = st.connected;
+  $("ig-sync-btn").hidden = !st.connected;
+  $("ig-off").hidden = !st.connected;
+  brief();
+}
+
+$("ig-posts").addEventListener("click", async e => {
+  const a = (e.target as HTMLElement).closest<HTMLElement>("[data-url]");
+  if (!a) return;
+  e.preventDefault();
+  if (!TAURI) return;
+  try { await invoke("instagram_abrir", { url: a.dataset.url }); } catch { /* enlace no válido: no se abre */ }
+});
+
+const igMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("ig-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
+$("ig-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!TAURI) { igMsg("En modo demo no se guarda nada.", "err"); return; }
+  const input = $<HTMLInputElement>("ig-token"), btn = $<HTMLButtonElement>("ig-connect");
+  btn.disabled = true; igMsg("Comprobando el token con Instagram y leyendo tus publicaciones…");
+  try {
+    const snap = await invoke<Instagram>("instagram_connect", { token: input.value });
+    input.value = "";
+    igMsg(`Conectado como @${snap.username}.`, "ok");
+    renderInstagram({ connected: true, snapshot: snap });
+  } catch (err) { igMsg(String(err), "err"); }
+  finally { btn.disabled = false; }
+});
+$("ig-sync-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("ig-sync-btn");
+  btn.disabled = true; igMsg("Leyendo Instagram…");
+  try { renderInstagram({ connected: true, snapshot: await invoke<Instagram>("instagram_sync") }); igMsg("Sincronizado.", "ok"); }
+  catch (err) { igMsg(String(err), "err"); $("src-instagram").className = "src err"; }
+  finally { btn.disabled = false; }
+});
+$("ig-off").addEventListener("click", async () => {
+  try { await invoke("instagram_disconnect"); igMsg("Token borrado de las credenciales de Windows. El historial de seguidores se queda en life.db."); renderInstagram({ connected: false, snapshot: null }); }
+  catch (err) { igMsg(String(err), "err"); }
+});
+
+function demoInstagram(): Status<Instagram> {
+  let seed = 29;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const dia = (i: number) => { const d = new Date(Date.now() - i * DIA); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const reach = Array.from({ length: 30 }, (_, i) => ({ fecha: dia(29 - i), valor: Math.round(180 + rnd() * 420 + (i > 24 ? 300 : 0)) }));
+  const historia = Array.from({ length: 30 }, (_, i) => ({ fecha: dia(29 - i), valor: 1180 + Math.round(i * 1.4 + rnd() * 3) }));
+  const textos = ["Retrato en luz de ventana", "Boda en Sintra · selección", "Carta nueva de Café Ámbar", "Detrás de cámaras", "Cerámica de Mar", "Paseo nocturno", "Prueba de color"];
+  const posts = textos.map((t, i) => ({
+    id: String(i), caption: t, media_type: i % 3 === 0 ? "VIDEO" : "IMAGE", product: i % 3 === 0 ? "REELS" : "FEED",
+    timestamp: new Date(Date.now() - (i * 5 + 1) * DIA).toISOString(), permalink: "https://www.instagram.com/",
+    likes: Math.round(40 + rnd() * 160), comments: Math.round(rnd() * 20), reach: Math.round(300 + rnd() * 1500),
+    views: Math.round(500 + rnd() * 4000), saved: Math.round(rnd() * 30), shares: Math.round(rnd() * 15),
+  }));
+  const online = Array.from({ length: 24 }, (_, h) => Math.round(30 + 200 * Math.exp(-((h - 21) ** 2) / 12) + 60 * Math.exp(-((h - 14) ** 2) / 8)));
+  return {
+    connected: true,
+    snapshot: {
+      username: "ejemplo", name: "Ejemplo", followers: 1222, follows: 310, media_count: 214, posts, reach,
+      reach_30: 9840, views_30: 31200, engaged_30: 612, interactions_30: 1890, online, historia, synced_at: new Date().toISOString(),
+    },
+  };
+}
 
 /* ---------- dinero ---------- */
 const CATS = ["Ingresos", "Casa y facturas", "Súper", "Restaurantes", "Transporte", "Suscripciones", "Compras", "Equipo",
@@ -1123,7 +1306,9 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); render(demo()); return; }
+  if (!TAURI) { renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); render(demo()); return; }
+  try { renderInstagram(await invoke<Status<Instagram>>("instagram_status")); }
+  catch (e) { igMsg(String(e), "err"); }
   try { renderDinero(await invoke<Dinero>("dinero_status")); }
   catch (e) { rvMsg(String(e), "err"); }
   try { renderGmail(await invoke<Gmail>("gmail_status")); }
@@ -1198,6 +1383,7 @@ if (TAURI) {
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
   listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
   listen<Dinero>("dinero-updated", e => renderDinero(e.payload));
+  listen<Instagram>("instagram-updated", e => renderInstagram({ connected: true, snapshot: e.payload }));
   // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
   setInterval(() => renderGmail(gmState), 5 * 60 * 1000);
 } else {

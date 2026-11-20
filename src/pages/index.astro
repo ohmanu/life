@@ -39,7 +39,7 @@ const tabs = [
           <span class="src" id="src-github"><i></i>GitHub</span>
           <span class="src" id="src-gmail"><i></i>Gmail</span>
           <span class="src" id="src-revolut"><i></i>Revolut</span>
-          <span class="src"><i></i>Instagram · fase 3</span>
+          <span class="src" id="src-instagram"><i></i>Instagram</span>
           <span class="src"><i></i>YouTube · fase 3</span>
         </span>
         <button class="btn" id="privacy" type="button" aria-pressed="false" title="Tecla P">Ocultar cifras</button>
@@ -181,10 +181,22 @@ const tabs = [
               <div class="kpi"><div class="v" data-k="streak">—</div><div class="sub" data-k="login"></div></div>
               <div class="rows" id="repos" style="margin-top:12px"></div>
             </div>
-            <div class="cell c-4 pending">
-              <span class="tag">FASE 3</span>
-              <h2>Instagram</h2>
-              <p>Seguidores, alcance y mejor hora para publicar. Necesita cuenta profesional.</p>
+            <div class="cell c-8">
+              <div class="cell-h"><h3 id="ig-h">Instagram</h3><span class="jp">写真</span></div>
+              <div class="kpis">
+                <div class="kpi"><div class="k">Seguidores</div><div class="v" data-i="seg">—</div><div class="d" data-i="seg_d"></div></div>
+                <div class="kpi"><div class="k">Alcance · 30 d</div><div class="v" data-i="reach">—</div><div class="d" data-i="reach_d"></div></div>
+                <div class="kpi"><div class="k">Visualizaciones · 30 d</div><div class="v" data-i="views">—</div><div class="d" data-i="views_d"></div></div>
+                <div class="kpi"><div class="k">Interacciones · 30 d</div><div class="v" data-i="inter">—</div><div class="d" data-i="inter_d"></div></div>
+              </div>
+              <svg class="heat-svg" id="ig-chart" viewBox="0 0 560 150" role="img" aria-label="Alcance diario de Instagram en los últimos 30 días y seguidores"></svg>
+              <div class="horas" id="ig-horas"></div>
+              <div class="foot"><span id="ig-sync">SIN CONECTAR</span><span>CADA HORA · SOLO LECTURA</span></div>
+            </div>
+            <div class="cell c-8">
+              <div class="cell-h"><h3>Publicaciones</h3><span class="jp">投稿</span></div>
+              <div class="posts" id="ig-posts"></div>
+              <div class="foot"><span>ESTADÍSTICAS DE LAS 24 MÁS RECIENTES · META LAS DA CON HASTA 48 H DE RETRASO</span><span id="ig-posts-n"></span></div>
             </div>
             <div class="cell c-4 pending">
               <span class="tag">FASE 3</span>
@@ -266,7 +278,29 @@ const tabs = [
                   <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
                 </div>
               </div>
-              <div class="conn"><div><h4>Instagram · YouTube</h4><div class="state">Fase 3</div></div><p>Métricas de cuenta y de publicaciones.</p><div></div></div>
+              <div class="conn">
+                <div><h4>Instagram</h4><div class="state" id="ig-state">Sin conectar</div></div>
+                <div>
+                  <div id="ig-help">
+                    <p>API oficial de Instagram, solo lectura (perfil, publicaciones y estadísticas). La cuenta tiene que ser de creador o empresa. Una vez:</p>
+                    <ol class="steps">
+                      <li>En <span class="copy">developers.facebook.com/apps</span> crea una app con el caso de uso <b>Gestionar mensajes y contenido en Instagram</b>.</li>
+                      <li>En ese caso de uso, <b>Configuración de la API con inicio de sesión de Instagram</b> → <b>Generar identificadores de acceso</b> → <b>Añadir cuenta</b> y entra con tu Instagram. Si te llega una invitación de tester, acéptala en Instagram (Configuración → Apps y sitios web).</li>
+                      <li>Pulsa <b>Generar identificador</b>, copia el token y pégalo aquí. Dura 60 días y LIFE lo renueva sola cada semana.</li>
+                    </ol>
+                  </div>
+                  <form class="field" id="ig-form" autocomplete="off">
+                    <input id="ig-token" type="password" placeholder="IGAA…" aria-label="Token de Instagram" spellcheck="false" />
+                    <button class="btn solid" type="submit" id="ig-connect">Conectar</button>
+                  </form>
+                  <div class="msg" id="ig-msg" role="status"></div>
+                </div>
+                <div class="actions">
+                  <button class="btn" type="button" id="ig-sync-btn" hidden>Sincronizar</button>
+                  <button class="btn danger" type="button" id="ig-off" hidden>Desconectar</button>
+                </div>
+              </div>
+              <div class="conn"><div><h4>YouTube</h4><div class="state">Fase 3</div></div><p>Suscriptores, horas vistas y retención.</p><div></div></div>
             </div>
             <div class="cell c-4">
               <div class="cell-h"><h3>Sistema</h3><span class="jp">システム</span></div>
