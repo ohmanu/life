@@ -194,8 +194,189 @@ fn hash(s: &str) -> String {
     format!("{h:016x}")
 }
 
+/// `1 ene 2026`, `20 sept 2026` (resumen del ejercicio) o `1/1/26` (intereses).
+fn fecha_es(s: &str) -> Option<String> {
+    let s = s.trim();
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%d/%m/%y") {
+        return d.and_hms_opt(0, 0, 0).map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
+    let mut it = s.split_whitespace();
+    let (d, m, y) = (it.next()?.parse::<u32>().ok()?, norm(it.next()?), it.next()?.parse::<i32>().ok()?);
+    const M: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    let mes = M.iter().position(|p| m.starts_with(p))? as u32 + 1;
+    NaiveDate::from_ymd_opt(y, mes, d)?.and_hms_opt(0, 0, 0).map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// «Resumen del ejercicio» de Revolut: varios bloques (cuentas, hucha, inversión…) en un solo CSV.
+/// Se leen los movimientos de las cuentas corrientes, los intereses de la hucha (sumados por mes)
+/// y el saldo de cierre de la hucha.
+fn parse_resumen(text: &str) -> Result<Parsed, String> {
+    let mut rdr = csv::ReaderBuilder::new().has_headers(false).flexible(true).from_reader(text.as_bytes());
+    let rows: Vec<Vec<String>> = rdr
+        .records()
+        .map(|r| r.map(|r| r.iter().map(|f| f.trim().to_string()).collect()))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("No se puede leer el CSV: {e}"))?;
+    fn f(r: &[String], i: usize) -> &str {
+        r.get(i).map(String::as_str).unwrap_or("")
+    }
+
+    // Nombre de la hucha («Cuenta con mejora activada»): sale en los intereses.
+    let hucha = rows.iter().find_map(|r| {
+        let d = f(r, 1);
+        let i = d.find("pagado a ")? + "pagado a ".len();
+        let rest = &d[i..];
+        Some(rest[..rest.rfind(" del ").unwrap_or(rest.len())].to_string())
+    });
+    let hucha_n = hucha.as_deref().map(norm).filter(|h| h.len() >= 4);
+
+    #[derive(PartialEq, Clone, Copy)]
+    enum Zona { Nada, ResumenAhorro, Corriente, Ahorro }
+    let mut zona = Zona::Nada;
+    let mut divisa = "EUR".to_string();
+    let mut cols: Option<(usize, usize, Option<usize>, Option<usize>)> = None; // importe, descripción, saldo, comisión
+    let mut interes_col: Option<usize> = None;
+    let mut cierre_hucha: Option<f64> = None;
+    let mut intereses: Vec<(String, f64)> = Vec::new();
+    let mut out = Parsed::default();
+    let mut seen: HashMap<String, u32> = HashMap::new();
+
+    for r in &rows {
+        let a = f(r, 0);
+        let solo = r.iter().skip(1).all(String::is_empty);
+        if solo && !a.is_empty() {
+            let n = norm(a);
+            if n.contains("resumenes") {
+                zona = if n.contains("ahorro") { Zona::ResumenAhorro } else { Zona::Nada };
+            } else if n.contains("estadodetransacciones") || n.contains("transactionstatements") {
+                zona = if n.contains("corriente") { Zona::Corriente } else if n.contains("ahorro") { Zona::Ahorro } else { Zona::Nada };
+            }
+            // «Cuenta personal (EUR)», «Ahorros  (EUR)»: la divisa del bloque.
+            if let (Some(i), Some(j)) = (a.rfind('('), a.rfind(')')) {
+                let d = a[i + 1..j.max(i + 1)].trim();
+                if d.len() == 3 && d.chars().all(|c| c.is_ascii_uppercase()) {
+                    divisa = d.to_string();
+                }
+            }
+            cols = None;
+            interes_col = None;
+            continue;
+        }
+        if zona == Zona::ResumenAhorro && cierre_hucha.is_none() {
+            if let Some(i) = r.iter().position(|x| norm(x) == "saldodecierre") {
+                cierre_hucha = amount(f(r, i + 1));
+            }
+            continue;
+        }
+        if a == "Total" || a.starts_with("---") || a.is_empty() {
+            cols = None;
+            interes_col = None;
+            continue;
+        }
+        if norm(a) == "fecha" {
+            let h: Vec<String> = r.iter().map(|x| norm(x)).collect();
+            let pos = |k: &str| h.iter().position(|x| x == k);
+            if zona == Zona::Corriente {
+                if let (Some(imp), Some(desc)) = (pos("entradassalidasdedinero"), pos("descripcion")) {
+                    cols = Some((imp, desc, pos("saldo"), pos("comisiones")));
+                }
+            } else if zona == Zona::Ahorro {
+                interes_col = pos("netinterest").or_else(|| pos("interesneto"));
+            }
+            continue;
+        }
+        if let Some((imp, desc, saldo, com)) = cols {
+            let (Some(fecha), Some(importe)) = (fecha_es(a), amount(f(r, imp))) else {
+                out.ignorados += 1;
+                continue;
+            };
+            let descripcion = f(r, desc).to_string();
+            let d = norm(&descripcion);
+            let low = descripcion.to_lowercase();
+            let cat = norm(f(r, desc + 1));
+            let tipo = if d.starts_with("revertof") || cat.contains("reembolso") {
+                "reembolso".to_string()
+            } else if ["bizum payment to", "to ", "a ", "from ", "desde ", "transfer "].iter().any(|p| low.starts_with(p)) && !cat.contains("comercio") {
+                if cat.contains("cambio") { "cambio".into() } else { "transferencia".into() }
+            } else if cat.contains("comercio") || d.starts_with("bizumpurchase") {
+                "tarjeta".to_string()
+            } else {
+                tipo(&cat)
+            };
+            let producto = "cuenta".to_string();
+            let base = format!("resumen|{producto}|{divisa}|{fecha}|{descripcion}|{importe:.2}");
+            let n = seen.entry(base.clone()).or_insert(0);
+            *n += 1;
+            let interno = interno(&tipo, &producto, &descripcion)
+                || hucha_n.as_deref().is_some_and(|h| d.contains(h));
+            out.movs.push(Mov {
+                id: hash(&if *n == 1 { base } else { format!("{base}#{n}") }),
+                comercio: comercio(&descripcion),
+                completada: Some(fecha.clone()),
+                fecha,
+                tipo,
+                producto,
+                descripcion,
+                importe,
+                comision: com.and_then(|i| amount(f(r, i))).map(f64::abs).unwrap_or(0.0),
+                divisa: divisa.clone(),
+                estado: "completado".into(),
+                saldo: saldo.and_then(|i| amount(f(r, i))),
+                interno,
+            });
+        } else if let Some(i) = interes_col {
+            if let (Some(fecha), Some(neto)) = (fecha_es(a), amount(f(r, i))) {
+                intereses.push((fecha, neto));
+            }
+        }
+    }
+
+    // Intereses de la hucha: uno por mes, con fecha del último día pagado.
+    let mut meses: Vec<(String, String, f64)> = Vec::new(); // mes, última fecha, suma
+    for (fecha, neto) in intereses {
+        match meses.last_mut() {
+            Some((m, ultima, suma)) if *m == fecha[..7] => {
+                *ultima = fecha;
+                *suma += neto;
+            }
+            _ => meses.push((fecha[..7].to_string(), fecha, neto)),
+        }
+    }
+    let nombre = hucha.unwrap_or_else(|| "hucha".into());
+    let n_meses = meses.len();
+    for (k, (mes, ultima, suma)) in meses.into_iter().enumerate() {
+        let descripcion = format!("Intereses de {nombre}");
+        out.movs.push(Mov {
+            id: hash(&format!("resumen|interes|{mes}")),
+            comercio: comercio(&descripcion),
+            completada: Some(ultima.clone()),
+            fecha: ultima,
+            tipo: "intereses".into(),
+            producto: "ahorro".into(),
+            descripcion,
+            importe: (suma * 100.0).round() / 100.0,
+            comision: 0.0,
+            divisa: "EUR".into(),
+            estado: "completado".into(),
+            saldo: if k + 1 == n_meses { cierre_hucha } else { None },
+            interno: false,
+        });
+    }
+    out.movs.sort_by(|a, b| a.fecha.cmp(&b.fecha));
+    if out.movs.is_empty() {
+        return Err("Este resumen de Revolut no trae movimientos de la cuenta.".into());
+    }
+    Ok(out)
+}
+
 pub fn parse(text: &str) -> Result<Parsed, String> {
     let text = text.trim_start_matches('\u{feff}');
+    if text.lines().any(|l| {
+        let n = norm(l);
+        n.starts_with("fechadescripcioncategoria") || n.starts_with("cuentascorrientesresumenes")
+    }) {
+        return parse_resumen(text);
+    }
     let first = text.lines().next().unwrap_or_default();
     let delim = if first.matches(';').count() > first.matches(',').count() { b';' } else { b',' };
     let mut rdr = csv::ReaderBuilder::new().delimiter(delim).flexible(true).from_reader(text.as_bytes());
@@ -316,6 +497,96 @@ CARD_PAYMENT,Current,2026-10-03 09:12:44,,Cafe,-1.50,0,EUR,COMPLETED,";
     #[test]
     fn rechaza_otros_csv() {
         assert!(parse("nombre,correo\nana,a@b.c").is_err());
+    }
+
+    const RESUMEN: &str = r#""Cuentas corrientes Resúmenes",,,,,,,,,,,
+,,,,,,,,,,,
+"Cuenta personal (EUR)",,,,,,,,,,,
+"Ingresos generados (incluidas invitaciones y recompensas)",,,,,,,,,,,
+"Ingresos por intereses","0,00€","Impuestos retenidos sobre los intereses","0,00€",,,,,,,,
+---------,,,,,,,,,,,
+"Cuentas de Ahorro Resúmenes",,,,,,,,,,,
+"Ahorros  (EUR)",,,,,,,,,,,
+"Valor del depósito",,,,,,,,,,,
+"Saldo medio del segundo trimestre 2026","41.176,97€","Saldo de cierre","40.002,04€",,,,,,,,
+---------,,,,,,,,,,,
+"Cuentas corrientes Estado de transacciones",,,,,,,,,,,
+"Cuenta personal (EUR)",,,,,,,,,,,
+"Extracto de transacción",,,,,,,,,,,
+Fecha,Descripción,Categoría,"Entradas/salidas de dinero",Saldo,"Impuestos retenidos","Otros impuestos",Comisiones,,,,
+"1 ene 2026","Bizum payment to: Ana P.",Otras,"-11,70€","760,67€","0,00€","0,00€","0,00€",,,,
+"3 ene 2026",Amazon,Comercio,"-21,54€","739,13€","0,00€","0,00€","0,00€",,,,
+"4 ene 2026","Dinero añadido a través de BIZUM",Recargar,"9,18€","748,31€","0,00€","0,00€","0,00€",,,,
+"4 ene 2026","Dinero añadido a través de BIZUM",Recargar,"9,18€","757,49€","0,00€","0,00€","0,00€",,,,
+"20 sept 2026","To Cuenta con mejora activada",Otras,"-100,00€","657,49€","0,00€","0,00€","0,00€",,,,
+"21 sept 2026",Zara,Reembolso,"15,00€","672,49€","0,00€","0,00€","0,00€",,,,
+"22 sept 2026","Conversión a XAU",Cambio,"-5,00€","667,49€","0,00€","0,00€","0,25€",,,,
+Total,,,"-262,02€",,"0,00€","0,00€","4,75€",,,,
+---------,,,,,,,,,,,
+"Cuenta personal (SEK)",,,,,,,,,,,
+"Extracto de transacción",,,,,,,,,,,
+Fecha,Descripción,Categoría,"Entradas/salidas de dinero","Entradas/salidas de dinero",Saldo,"Impuestos retenidos","Impuestos retenidos","Otros impuestos","Otros impuestos",Comisiones,Comisiones
+Total,,,"0,00 SEK","0,00€",,"0,00 SEK","0,00€","0,00 SEK","0,00€","0,00 SEK","0,00€"
+---------,,,,,,,,,,,
+"Cuentas de Ahorro Transaction Statements",,,,,,,,,,,
+"Ahorros  (EUR)",,,,,,,,,,,
+"Extracto de transacciones (recibo de solo intereses)",,,,,,,,,,,
+Fecha,Descripción,TAE,TIN,"Gross interest","Impuestos retenidos","Other taxes",Fees,"Net interest",,,
+1/1/26,"Interés neto pagado a Cuenta con mejora activada del 1 ene 2026","1.25%","1.25%","1,35€","0,25€","0,00€","0,00€","1,10€",,,
+2/1/26,"Interés neto pagado a Cuenta con mejora activada del 2 ene 2026","1.25%","1.25%","1,36€","0,26€","0,00€","0,00€","1,10€",,,
+1/2/26,"Interés neto pagado a Cuenta con mejora activada del 1 feb 2026","1.25%","1.25%","1,36€","0,26€","0,00€","0,00€","1,05€",,,
+---------,,,,,,,,,,,
+"Crypto Estado de transacciones",,,,,,,,,,,
+"Fecha de compra","Descripción y símbolo","Unidades compradas","Precio unitario","Valor de la compra",Comisiones,,,,,,
+"#;
+
+    #[test]
+    fn lee_el_resumen_del_ejercicio() {
+        let p = parse(RESUMEN).unwrap();
+        let cuenta: Vec<_> = p.movs.iter().filter(|m| m.producto == "cuenta").collect();
+        assert_eq!(cuenta.len(), 7);
+        assert_eq!(cuenta[0].fecha, "2026-01-01 00:00:00");
+        assert_eq!(cuenta[0].tipo, "transferencia");
+        assert_eq!(cuenta[0].saldo, Some(760.67));
+        assert_eq!(cuenta[1].tipo, "tarjeta");
+        assert_eq!(cuenta[2].tipo, "recarga");
+        assert_ne!(cuenta[2].id, cuenta[3].id, "dos bizum iguales el mismo día");
+        let hucha = cuenta.iter().find(|m| m.descripcion.starts_with("To Cuenta")).unwrap();
+        assert!(hucha.interno);
+        assert_eq!(hucha.fecha, "2026-09-20 00:00:00");
+        assert_eq!(cuenta[5].tipo, "reembolso");
+        assert!(cuenta[6].interno, "cambio a oro");
+        assert_eq!(cuenta[6].comision, 0.25);
+        assert!(cuenta.iter().all(|m| m.divisa == "EUR"));
+
+        let int: Vec<_> = p.movs.iter().filter(|m| m.producto == "ahorro").collect();
+        assert_eq!(int.len(), 2, "un apunte de intereses por mes");
+        assert_eq!(int[0].importe, 2.2);
+        assert_eq!(int[0].fecha, "2026-01-02 00:00:00");
+        assert!(!int[0].interno);
+        assert_eq!(int[0].saldo, None);
+        assert_eq!(int[1].saldo, Some(40002.04), "saldo de cierre de la hucha en el último");
+    }
+
+    /// `LIFE_CSV=ruta cargo test archivo_real -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn archivo_real() {
+        let path = std::env::var("LIFE_CSV").expect("LIFE_CSV");
+        let bytes = std::fs::read(path).unwrap();
+        let p = parse(&String::from_utf8_lossy(&bytes)).unwrap();
+        let mut por_tipo: HashMap<String, usize> = HashMap::new();
+        for m in &p.movs {
+            *por_tipo.entry(format!("{}/{}/{}", m.producto, m.tipo, if m.interno { "interno" } else { "-" })).or_default() += 1;
+        }
+        println!("movimientos {} · ignorados {}", p.movs.len(), p.ignorados);
+        println!("{por_tipo:#?}");
+        println!("primero {} · último {}", p.movs[0].fecha, p.movs.last().unwrap().fecha);
+        let ultimo_saldo = p.movs.iter().rev().find(|m| m.producto == "cuenta" && m.saldo.is_some()).and_then(|m| m.saldo);
+        let hucha = p.movs.iter().rev().find(|m| m.producto == "ahorro" && m.saldo.is_some()).and_then(|m| m.saldo);
+        println!("saldo cuenta {ultimo_saldo:?} · hucha {hucha:?}");
+        let suma: f64 = p.movs.iter().filter(|m| m.producto == "cuenta").map(|m| m.importe).sum();
+        println!("suma cuenta {suma:.2}");
     }
 
     #[test]

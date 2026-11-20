@@ -292,27 +292,31 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
     let tx = conn.transaction()?;
     let (mut nuevos, mut cambiados) = (0, 0);
     {
-        let mut prev = tx.prepare("SELECT estado, completada, saldo FROM transacciones WHERE id = ?1")?;
+        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe FROM transacciones WHERE id = ?1")?;
         let mut ins = tx.prepare(
             "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
                                         comision, divisa, estado, saldo, interno, importado)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )?;
         let mut upd = tx.prepare(
-            "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5 WHERE id = ?1",
+            "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5, importe = ?6, fecha = ?7
+             WHERE id = ?1",
         )?;
         for m in movs {
-            let old: Option<(String, Option<String>, Option<f64>)> =
-                prev.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
+            let old: Option<(String, Option<String>, Option<f64>, f64)> =
+                prev.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?;
             match old {
                 None => {
                     ins.execute(params![m.id, m.fecha, m.completada, m.tipo, m.producto, m.descripcion, m.comercio,
                                         m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando])?;
                     nuevos += 1;
                 }
-                Some((estado, completada, saldo)) => {
-                    if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo) {
-                        upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision])?;
+                // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se actualizan.
+                Some((estado, completada, saldo, importe)) => {
+                    if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo)
+                        || (importe - m.importe).abs() > 0.004
+                    {
+                        upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision, m.importe, m.fecha])?;
                         cambiados += 1;
                     }
                 }
