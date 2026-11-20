@@ -443,6 +443,21 @@ async fn banco_conectar(app: AppHandle) -> Result<DineroView, String> {
         .title("LIFE · Autorizar Revolut (solo lectura)")
         .inner_size(520.0, 780.0)
         .center()
+        // Revolut abre una ventana aparte para que confirmes: se deja abrir (con su relación
+        // con esta, para que avise al terminar). Lo que no sea web (enlace a la app) va al sistema.
+        .on_new_window({
+            let app = app.clone();
+            move |u, _| {
+                log::info!("banco: ventana nueva {}", u.as_str().split('?').next().unwrap_or(""));
+                if matches!(u.scheme(), "http" | "https") {
+                    tauri::webview::NewWindowResponse::Allow
+                } else {
+                    use tauri_plugin_opener::OpenerExt;
+                    let _ = app.opener().open_url(u.as_str(), None::<&str>);
+                    tauri::webview::NewWindowResponse::Deny
+                }
+            }
+        })
         .on_navigation(move |u| {
             if !u.as_str().starts_with(banco::REDIRECT) {
                 return true;
