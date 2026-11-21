@@ -163,6 +163,12 @@ const MIGRATIONS: &[&str] = &[
     "
     DELETE FROM ajustes WHERE clave = 'banco_desde';
     ",
+    // 13 · nóminas antiguas deducidas por quien las envía (ver deducir_nominas)
+    "
+    UPDATE transacciones SET tipo = 'nomina', concepto = 'Desde Sabadell'
+     WHERE fuente = 'banco' AND importe > 0 AND interno = 0 AND tipo IN ('otro', 'transferencia', 'recarga')
+       AND descripcion IN (SELECT DISTINCT descripcion FROM transacciones WHERE tipo = 'nomina' AND concepto = 'Desde Sabadell');
+    ",
 ];
 
 pub fn categorias_ia(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
@@ -512,6 +518,17 @@ pub fn set_categoria(conn: &Connection, comercio: &str, categoria: &str) -> rusq
 
 /// Lo del banco manda: los movimientos de CSV de un producto desde la primera fecha que da el
 /// banco para ese producto se retiran (lo anterior se queda: el banco no llega tan atrás).
+/// Los movimientos antiguos llegan sin IBAN de origen: los ingresos de quien envía las nóminas
+/// de Sabadell (misma descripción, que no sean devoluciones) también son nómina.
+pub fn deducir_nominas(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE transacciones SET tipo = 'nomina', concepto = 'Desde Sabadell'
+         WHERE fuente = 'banco' AND importe > 0 AND interno = 0 AND tipo IN ('otro', 'transferencia', 'recarga')
+           AND descripcion IN (SELECT DISTINCT descripcion FROM transacciones WHERE tipo = 'nomina' AND concepto = 'Desde Sabadell')",
+        [],
+    )
+}
+
 pub fn retirar_csv_solapado(conn: &Connection) -> rusqlite::Result<usize> {
     conn.execute(
         "DELETE FROM transacciones WHERE fuente = 'csv' AND fecha >= (
@@ -634,6 +651,24 @@ mod tests {
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].valores["descanso"], 5);
         assert_eq!(r[0].nota, "Semana de bodas");
+    }
+
+    #[test]
+    fn deduce_las_nominas_antiguas_por_quien_las_envia() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = open(dir.path(), &new_key()).unwrap();
+        let mut nueva = mov("n1", "2026-10-30 00:00:00", "YO MISMO", 1500.0, "completado", None, "banco", "cuenta");
+        nueva.tipo = "nomina".into();
+        nueva.concepto = Some("Desde Sabadell".into());
+        let mut vieja = mov("n2", "2026-06-30 00:00:00", "YO MISMO", 1500.0, "completado", None, "banco", "cuenta");
+        vieja.tipo = "otro".into();
+        let mut devolucion = mov("r1", "2026-06-12 00:00:00", "YO MISMO", 49.9, "completado", None, "banco", "cuenta");
+        devolucion.tipo = "reembolso".into();
+        upsert_movs(&mut c, &[nueva, vieja, devolucion], "t").unwrap();
+        assert_eq!(deducir_nominas(&c).unwrap(), 1);
+        let tipos: Vec<_> = movs(&c).unwrap().into_iter().map(|m| (m.id, m.tipo)).collect();
+        assert!(tipos.contains(&("n2".into(), "nomina".into())));
+        assert!(tipos.contains(&("r1".into(), "reembolso".into())));
     }
 
     #[test]

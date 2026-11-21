@@ -1179,6 +1179,8 @@ async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
     db::upsert_movs(&mut conn, &movs, &now).map_err(|e| e.to_string())?;
     // Lo del banco manda sobre lo importado por CSV en el mismo periodo y producto.
     db::retirar_csv_solapado(&conn).map_err(|e| e.to_string())?;
+    // Nóminas antiguas (el banco no da su IBAN de origen): se deducen por quien las envía.
+    db::deducir_nominas(&conn).map_err(|e| e.to_string())?;
     let hasta = (chrono::Local::now() - chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
     let e = |e: rusqlite::Error| e.to_string();
     db::set_ajuste(&conn, "banco_desde", &hasta).map_err(e)?;
