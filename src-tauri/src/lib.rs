@@ -1241,9 +1241,16 @@ fn avisar_banco(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn dinero_status(app: AppHandle) -> Result<DineroView, String> {
+    let t = std::time::Instant::now();
     let state = app.state::<Db>();
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    dinero_view(&conn)
+    let espera = t.elapsed();
+    let v = dinero_view(&conn);
+    match &v {
+        Ok(d) => log::info!("dinero_status: {} movimientos, banco conectado={} cuentas={} (espera {espera:?}, total {:?})", d.movimientos.len(), d.banco.conectado, d.banco.cuentas, t.elapsed()),
+        Err(e) => log::warn!("dinero_status falló: {e}"),
+    }
+    v
 }
 
 #[tauri::command]
@@ -1324,15 +1331,21 @@ pub fn run() {
             Some(vec!["--bandeja"]),
         ))
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build(),
-                )?;
-            }
+            // Registro también en la versión instalada: %LOCALAPPDATA%com.glutamato.lifelogsLIFE.log
+            // (sin datos personales: solo recuentos, tiempos y errores). Se queda con un archivo de 1 MB.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .max_file_size(1_000_000)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                    .build(),
+            )?;
+            log::info!("LIFE {} arrancando", app.package_info().version);
 
             let dir = app.path().app_data_dir()?;
             let key = db_key().map_err(|e| format!("No se pudo leer la clave de life.db: {e}"))?;
-            let conn = db::open(&dir, &key).map_err(|e| format!("No se pudo abrir life.db: {e}"))?;
+            let conn = db::open(&dir, &key).map_err(|e| { log::error!("No se pudo abrir life.db: {e}"); format!("No se pudo abrir life.db: {e}") })?;
+            log::info!("life.db abierta: {} movimientos", conn.query_row("SELECT count(*) FROM transacciones", [], |r| r.get::<_, i64>(0)).unwrap_or(-1));
             app.manage(Db(Mutex::new(conn)));
 
             // Bandeja del sistema

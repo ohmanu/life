@@ -2052,6 +2052,31 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
+/** Dinero desde life.db. Si llega «conectado» pero sin movimientos (no debería), se vuelve a pedir. */
+async function cargarDinero(intento = 0): Promise<void> {
+  try {
+    const d = await invoke<Dinero>("dinero_status");
+    renderDinero(d);
+    if (!d.movimientos.length && d.banco?.conectado && intento < 6) setTimeout(() => cargarDinero(intento + 1), 1500);
+  } catch (e) {
+    if (intento < 6) setTimeout(() => cargarDinero(intento + 1), 1500);
+    else rvMsg(String(e), "err");
+  }
+}
+
+/** Al volver a la ventana (desde la bandeja o de otra app), se refrescan los datos guardados. */
+let refrescadoEn = 0;
+async function refrescar() {
+  if (!TAURI || !datosListos || document.visibilityState !== "visible" || Date.now() - refrescadoEn < 20_000) return;
+  refrescadoEn = Date.now();
+  await cargarDinero(6);
+  try { renderGmail(await invoke<Gmail>("gmail_status")); } catch { /* sigue lo que había */ }
+  try { renderInstagram(await invoke<Status<Instagram>>("instagram_status")); } catch { /* idem */ }
+  try { render(await invoke<Status<GitHub>>("github_status")); } catch { /* idem */ }
+}
+document.addEventListener("visibilitychange", refrescar);
+window.addEventListener("focus", refrescar);
+
 async function load() {
   if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); renderClaude(); renderTokens(demoTokens()); return; }
   if (YOUTUBE) {
@@ -2062,8 +2087,7 @@ async function load() {
   catch (e) { igMsg(String(e), "err"); }
   try { radarState = await invoke<Semana[]>("radar_status"); } catch { radarState = []; }
   dibujarRadar();
-  try { renderDinero(await invoke<Dinero>("dinero_status")); }
-  catch (e) { rvMsg(String(e), "err"); }
+  await cargarDinero();
   try { renderGmail(await invoke<Gmail>("gmail_status")); }
   catch (e) { gmMsg(String(e), "err"); }
   try { render(await invoke<Status<GitHub>>("github_status")); }

@@ -845,6 +845,7 @@ mod rescate {
                     let n = |t: &str| c.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get::<_, i64>(0)).map(|x| x.to_string()).unwrap_or_else(|_| "—".into());
                     let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap_or(-1);
                     let a = |k: &str| super::ajuste(&c, k).ok().flatten().unwrap_or_else(|| "—".into());
+                    println!("banco_error={} banco_desde={} banco_valido={}", a("banco_error"), a("banco_desde"), a("banco_valido_hasta"));
                     println!("{ruta}: version={v} movs={} ajustes={} radar={} categorias={} partes={} tokens_dia={} cat_ia={} hucha={} oro={} banco_sync={}",
                         n("transacciones"), n("ajustes"), n("radar"), n("categorias"), n("partes"), n("tokens_dia"), n("categorias_ia"), a("hucha_saldo"), a("oro_onzas"), a("banco_sincronizado"));
                 }
