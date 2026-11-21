@@ -139,7 +139,44 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE transacciones ADD COLUMN concepto TEXT;
     DELETE FROM ajustes WHERE clave IN ('banco_desde', 'revolut_importado', 'revolut_archivo');
     ",
+    // 10 · categorías que propone Claude para comercios que las reglas no reconocen
+    "
+    CREATE TABLE categorias_ia (
+        comercio  TEXT PRIMARY KEY,
+        categoria TEXT NOT NULL,
+        creado    TEXT NOT NULL
+    );
+    ",
+    // 11 · tokens de Claude por día, modelo y proyecto (registros locales de Claude Code y llamadas de LIFE)
+    "
+    CREATE TABLE tokens_dia (
+        fecha TEXT NOT NULL, modelo TEXT NOT NULL, proyecto TEXT NOT NULL,
+        entrada INTEGER NOT NULL DEFAULT 0, salida INTEGER NOT NULL DEFAULT 0,
+        cache_creacion INTEGER NOT NULL DEFAULT 0, cache_lectura INTEGER NOT NULL DEFAULT 0,
+        mensajes INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (fecha, modelo, proyecto)
+    );
+    CREATE TABLE tokens_archivos (ruta TEXT PRIMARY KEY, offset INTEGER NOT NULL);
+    CREATE TABLE tokens_vistos (id TEXT PRIMARY KEY);
+    ",
 ];
+
+pub fn categorias_ia(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
+    let mut st = conn.prepare("SELECT comercio, categoria FROM categorias_ia")?;
+    let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
+pub fn guardar_categorias_ia(conn: &Connection, m: &HashMap<String, String>, cuando: &str) -> rusqlite::Result<()> {
+    for (k, v) in m {
+        conn.execute(
+            "INSERT INTO categorias_ia (comercio, categoria, creado) VALUES (?1, ?2, ?3)
+             ON CONFLICT(comercio) DO UPDATE SET categoria = excluded.categoria, creado = excluded.creado",
+            params![k, v, cuando],
+        )?;
+    }
+    Ok(())
+}
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct Parte {

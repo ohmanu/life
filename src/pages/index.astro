@@ -166,15 +166,15 @@ const tabs = [
             <div class="cell c-7">
               <div class="cell-h"><h3>Ingresos y gastos · 12 meses</h3><span class="jp">収支</span></div>
               <svg class="heat-svg" id="flow" viewBox="0 0 560 230" role="img" aria-label="Ingresos y gastos de los últimos 12 meses"></svg>
-              <div class="legend"><span><i class="lg-in"></i>Ingresos</span><span><i class="lg-out"></i>Gastos</span><span><i class="lg-acc"></i>Patrimonio: cuenta + hucha + oro</span><span class="muted">pulsa un mes para verlo</span></div>
+              <div class="legend"><span><i class="lg-nom"></i>Nómina</span><span><i class="lg-in"></i>Otros ingresos</span><span><i class="lg-out"></i>Gastos</span><span><i class="lg-acc"></i>Patrimonio: cuenta + hucha + oro</span><span class="muted">pulsa un mes para verlo</span></div>
             </div>
             <div class="cell c-5">
               <div class="cell-h"><h3 data-m="cats_h">Gasto por categoría</h3><span class="jp">分類</span></div>
               <div class="cats" id="cats"></div>
-              <div class="foot"><span>↑ = POR ENCIMA DE SU MEDIA DE 6 MESES</span></div>
+              <div class="foot"><span>↑ = POR ENCIMA DE SU MEDIA DE 6 MESES</span><button class="btn" type="button" id="revisar" hidden></button></div>
             </div>
             <div class="cell c-7">
-              <div class="cell-h"><h3 data-m="movs_h">Movimientos</h3><span class="jp">取引</span></div>
+              <div class="cell-h"><h3 id="movs-h">Movimientos</h3><span class="jp">取引</span></div>
               <div class="movs" id="movs"></div>
               <div class="foot"><span>LA CATEGORÍA QUE ELIGES SE RECUERDA PARA TODO EL COMERCIO</span><span id="movs-n"></span></div>
             </div>
@@ -211,6 +211,19 @@ const tabs = [
               <div class="cell-h"><h3>Publicaciones</h3><span class="jp">投稿</span></div>
               <div class="posts" id="ig-posts"></div>
               <div class="foot"><span>ESTADÍSTICAS DE LAS 24 MÁS RECIENTES · META LAS DA CON HASTA 48 H DE RETRASO</span><span id="ig-posts-n"></span></div>
+            </div>
+            <div class="cell c-12" id="tk-cell">
+              <div class="cell-h"><h3>Claude · tokens por modelo</h3><span class="jp">トークン</span></div>
+              <div class="kpis">
+                <div class="kpi"><div class="k">Hoy</div><div class="v" data-t="hoy">—</div><div class="d" data-t="hoy_d"></div></div>
+                <div class="kpi"><div class="k">7 días</div><div class="v" data-t="d7">—</div><div class="d" data-t="d7_d"></div></div>
+                <div class="kpi"><div class="k">30 días</div><div class="v" data-t="d30">—</div><div class="d" data-t="d30_d"></div></div>
+                <div class="kpi"><div class="k">LIFE · 30 días</div><div class="v" data-t="life">—</div><div class="d" data-t="life_d"></div></div>
+              </div>
+              <svg class="heat-svg" id="tk-chart" viewBox="0 0 560 150" role="img" aria-label="Tokens de Claude por día y modelo en los últimos 30 días"></svg>
+              <div class="legend" id="tk-legend"></div>
+              <div class="tk-tablas"><div class="rows" id="tk-modelos"></div><div class="rows" id="tk-proyectos"></div></div>
+              <div class="foot"><span id="tk-foot">SIN LEER</span><span>CLAUDE CODE Y LIFE · LOS CHATS DE CLAUDE.AI Y LOS LÍMITES DEL PLAN NO SE PUEDEN LEER</span></div>
             </div>
             <div class="cell c-4" data-youtube>
               <div class="cell-h"><h3 id="yt-h">YouTube</h3><span class="jp">動画</span></div>

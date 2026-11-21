@@ -159,6 +159,7 @@ function select(tab: HTMLButtonElement, silencio = false) {
     sonar("pestana", undefined, .6);
     if (vista === "v-dinero" || vista === "v-redes") sonarGraficas();
   }
+  if (vista === "v-redes") cargarTokens();
   tabs.forEach(t => {
     const on = t === tab;
     t.setAttribute("aria-selected", String(on));
@@ -972,7 +973,7 @@ function contexto() {
     const s = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
     const mes = mesKey(ahora);
     const gastosMes = rvState.movimientos
-      .filter(m => m.fecha.startsWith(mes) && cuenta(m) && catOf(m) !== "Ingresos" && m.importe < 0)
+      .filter(m => m.fecha.startsWith(mes) && cuenta(m) && !esIngreso(catOf(m)) && m.importe < 0)
       .sort((a, b) => a.importe - b.importe).slice(0, 15)
       .map(m => ({ fecha: m.fecha.slice(0, 10), comercio: m.descripcion, importe: r1(-m.importe), categoria: catOf(m) }));
     dinero = {
@@ -1129,21 +1130,125 @@ $("ask-form").addEventListener("submit", async e => {
   finally { btn.disabled = false; }
 });
 
+/* ---------- tokens de claude ---------- */
+type TkFila = { fecha: string; modelo: string; proyecto: string; entrada: number; salida: number; cache_creacion: number; cache_lectura: number; mensajes: number };
+type TokensView = { filas: TkFila[]; leido: string | null };
+
+/** Tokens procesados: entrada + escritura de caché + salida (la caché leída va aparte: es mucho y barata). */
+const tkTot = (f: TkFila) => f.entrada + f.cache_creacion + f.salida;
+const tkNombre = (m: string) => {
+  const r = m.replace(/^claude-/, "").match(/^([a-z]+)-(\d+)-(\d+)/);
+  return r ? `${r[1][0].toUpperCase()}${r[1].slice(1)} ${r[2]}.${r[3]}` : m;
+};
+const tkCifra = (n: number) => n >= 1e9 ? `${fmt(n / 1e9, 1)} G` : n >= 1e6 ? `${fmt(n / 1e6, 1)} M` : n >= 1e4 ? `${fmt(n / 1e3, 0)} k` : fmt(n);
+const setT = (k: string, v: string) => document.querySelectorAll<HTMLElement>(`[data-t="${k}"]`).forEach(n => (n.textContent = v));
+const diaStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+function renderTokens(t: TokensView | null) {
+
+  const filas = t?.filas ?? [];
+  const hoy = diaStr(new Date());
+  const desde = (n: number) => diaStr(new Date(Date.now() - (n - 1) * DIA));
+  const suma = (fs: TkFila[]) => fs.reduce((s, f) => s + tkTot(f), 0);
+  const en = (n: number) => filas.filter(f => f.fecha >= desde(n));
+  const f30 = en(30);
+  setT("hoy", filas.length ? tkCifra(suma(filas.filter(f => f.fecha === hoy))) : "—");
+  setT("hoy_d", filas.length ? `${fmt(filas.filter(f => f.fecha === hoy).reduce((s, f) => s + f.mensajes, 0))} mensajes` : "");
+  setT("d7", filas.length ? tkCifra(suma(en(7))) : "—");
+  setT("d7_d", filas.length ? `caché leída ${tkCifra(en(7).reduce((s, f) => s + f.cache_lectura, 0))}` : "");
+  setT("d30", filas.length ? tkCifra(suma(f30)) : "—");
+  setT("d30_d", filas.length ? `${fmt(f30.reduce((s, f) => s + f.mensajes, 0))} mensajes` : "");
+  const life = f30.filter(f => f.proyecto === "LIFE");
+  setT("life", filas.length ? tkCifra(suma(life)) : "—");
+  setT("life_d", filas.length ? `${fmt(life.reduce((s, f) => s + f.mensajes, 0))} llamadas · parte, radar, preguntas` : "");
+
+  // Modelos por uso, para colores y tablas.
+  const porModelo = new Map<string, number>();
+  for (const f of f30) porModelo.set(f.modelo, (porModelo.get(f.modelo) ?? 0) + tkTot(f));
+  const modelos = [...porModelo].sort((a, b) => b[1] - a[1]).map(([m]) => m);
+  const grupo = (m: string) => Math.min(modelos.indexOf(m), 3);
+
+  // Gráfica: barras apiladas por día y modelo, 30 días.
+  const svg = $("tk-chart") as unknown as SVGSVGElement;
+  svg.replaceChildren();
+  if (!filas.length) { label(svg, 10, 75, "SIN DATOS DE CLAUDE CODE TODAVÍA", { fill: K.grid }); }
+  else {
+    const defs = svgEl("defs", {}, svg);
+    const pat = svgEl("pattern", { id: "tk-hatch", width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+    svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: K.text, "stroke-width": 1.2 }, pat);
+    const fill = [K.ph, K.hi, "url(#tk-hatch)", K.grid];
+    const dias = Array.from({ length: 30 }, (_, i) => desde(30 - i));
+    const pila = dias.map(d => { const g = [0, 0, 0, 0]; for (const f of f30) if (f.fecha === d) g[grupo(f.modelo)] += tkTot(f); return g; });
+    const max = Math.max(1, ...pila.map(g => g[0] + g[1] + g[2] + g[3]));
+    const l = 46, r = 552, top = 12, base = 122, gw = (r - l) / 30, bw = gw * .7;
+    for (let k = 0; k <= 2; k++) {
+      const v = max * k / 2, y = base - v / max * (base - top);
+      svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.grid, "stroke-width": 1, "stroke-dasharray": k ? "2 4" : "" }, svg);
+      label(svg, l - 6, y + 3, tkCifra(v), { "text-anchor": "end", "font-size": 9 });
+    }
+    pila.forEach((g, i) => {
+      let y = base;
+      const x = l + i * gw + (gw - bw) / 2;
+      g.forEach((v, j) => {
+        if (!v) return;
+        const h = v / max * (base - top);
+        y -= h;
+        svgEl("rect", { x, y, width: bw, height: h, fill: fill[j], stroke: j === 2 ? K.text : "none", "stroke-width": j === 2 ? .8 : 0, class: "grow", style: `--i:${i}` }, svg)
+          .appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${dias[i]} · ${tkCifra(v)}` }));
+      });
+      if ((i % 7 === 0 && 29 - i >= 4) || i === 29) label(svg, x + bw / 2, base + 14, ddmm(new Date(dias[i] + "T00:00:00")), { "text-anchor": "middle", "font-size": 9 });
+    });
+  }
+  $("tk-legend").innerHTML = modelos.slice(0, 4).map((m, i) => `<span><i class="tk-${Math.min(i, 3)}"></i>${esc(i === 3 && modelos.length > 4 ? "Otros" : tkNombre(m))}</span>`).join("");
+
+  // Tablas: por modelo y por proyecto (30 días).
+  const fila = (k: string, v: number, extra = "") => `<div class="row"><span>${esc(k)}${extra ? ` <span class="lang">${extra}</span>` : ""}</span><span>${tkCifra(v)}</span></div>`;
+  $("tk-modelos").innerHTML = `<div class="row"><span class="muted">POR MODELO · 30 D</span><span class="muted">TOKENS</span></div>`
+    + (modelos.length ? modelos.map(m => fila(tkNombre(m), porModelo.get(m)!, `caché leída ${tkCifra(f30.filter(f => f.modelo === m).reduce((s, f) => s + f.cache_lectura, 0))}`)).join("") : `<div class="row"><span class="muted">—</span><span></span></div>`);
+  const porProy = new Map<string, number>();
+  for (const f of f30) porProy.set(f.proyecto, (porProy.get(f.proyecto) ?? 0) + tkTot(f));
+  $("tk-proyectos").innerHTML = `<div class="row"><span class="muted">POR PROYECTO · 30 D</span><span class="muted">TOKENS</span></div>`
+    + ([...porProy].sort((a, b) => b[1] - a[1]).map(([p, v]) => fila(p, v)).join("") || `<div class="row"><span class="muted">—</span><span></span></div>`);
+  $("tk-foot").textContent = t?.leido ? `LEÍDO ${stamp(t.leido)}` : TAURI ? "LEYENDO…" : "MODO DEMO";
+}
+
+let tkCargando = false;
+async function cargarTokens(forzar = false) {
+  if (!TAURI || tkCargando) return;
+  tkCargando = true;
+  try { renderTokens(await invoke<TokensView>("tokens_status", { forzar })); }
+  catch (err) { $("tk-foot").textContent = String(err); }
+  finally { tkCargando = false; }
+}
+
+function demoTokens(): TokensView {
+  let seed = 3;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const filas: TkFila[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const fecha = diaStr(new Date(Date.now() - i * DIA));
+    filas.push({ fecha, modelo: "claude-opus-5-5", proyecto: i % 3 ? "life" : "glutamato-cult", entrada: Math.round(rnd() * 3e5), salida: Math.round(rnd() * 8e4), cache_creacion: Math.round(rnd() * 2e5), cache_lectura: Math.round(rnd() * 9e6), mensajes: Math.round(20 + rnd() * 80) });
+    filas.push({ fecha, modelo: "claude-sonnet-5-5", proyecto: "LIFE", entrada: 4000, salida: 900, cache_creacion: 0, cache_lectura: 0, mensajes: 3 });
+    if (rnd() > .6) filas.push({ fecha, modelo: "claude-haiku-5-5", proyecto: "LIFE", entrada: 9000, salida: 1200, cache_creacion: 0, cache_lectura: 0, mensajes: 1 });
+  }
+  return { filas, leido: new Date().toISOString() };
+}
+
 /* ---------- dinero ---------- */
-const CATS = ["Ingresos", "Casa y facturas", "Súper", "Restaurantes", "Transporte", "Suscripciones", "Compras", "Equipo",
+const CATS = ["Nómina", "Ingresos", "Casa y facturas", "Súper", "Restaurantes", "Transporte", "Suscripciones", "Compras", "Equipo",
   "Ocio", "Salud", "Viajes", "Impuestos", "Comisiones", "Efectivo", "Transferencias", "Otros", "Interno"] as const;
 /** Reglas automáticas por descripción. Lo que corriges a mano manda sobre ellas. */
 const REGLAS: [string, RegExp][] = [
   ["Casa y facturas", /alquiler|\brent\b|iberdrola|endesa|naturgy|holaluz|octopus|canal de isabel|aguas? de|comunidad de prop|vodafone|orange|yoigo|masmovil|pepephone|lowi|simyo|digi\b|o2\b|seguro hogar/],
-  ["Súper", /mercadona|carrefour|lidl|aldi|\bdia\b|eroski|alcampo|consum|hipercor|ahorramas|bonpreu|caprabo|condis|spar\b|supermercado|froiz|gadis|bm\b/],
-  ["Restaurantes", /restaurante|\bbar\b|caf[eé]|cafeter|burger|mcdonald|kfc|telepizza|domino|just ?eat|glovo|deliveroo|uber ?eats|starbucks|tapas|pizzer|cervecer|taberna|bodega|sushi/],
-  ["Transporte", /\buber\b|cabify|bolt|renfe|metro|\bemt\b|\btmb\b|taxi|repsol|cepsa|\bbp\b|galp|shell|gasolin|parking|aparcamiento|bicing|free ?now|blablacar|ouigo|iryo|alsa|peaje|autopista/],
+  ["Súper", /mercadona|carrefour|lidl|aldi|\bdia\b|eroski|alcampo|consum|hipercor|supercor|ahorramas|bonpreu|caprabo|condis|spar\b|supermercado|super ?mercado|froiz|gadis|\bbm\b|covir[aá]n|masymas|mas ?y ?mas|alimerka|supeco|family cash|hiber|lupa\b|simply|primaprix|el arbol|claudio|vegalsa|dinosol|hiperdino|tu ?super|coaliment|plusfresc|sorli|mercat|fruter[ií]a|carnicer[ií]a|pescader[ií]a|panader[ií]a|ultramarinos|alimentaci[oó]n|groceries/],
+  ["Restaurantes", /restaurante|restaurant|\brest\b|\bbar\b|caf[eé]|cafeter|burger|mcdonald|kfc|telepizza|domino|just ?eat|glovo|deliveroo|uber ?eats|starbucks|tapas|pizz|cervecer|taberna|bodega|sushi|kebab|asador|mes[oó]n|braser|tasca|churrer|helader|gastrobar|vinoteca|sidrer[ií]a|marisquer|pollos|poke|ramen|wok|tacos|100 montaditos|vips|goiko|five guys|foster|tgb|rodilla|granier|manolo bakes|\bplk\b|popeyes|tim hortons|honest greens|la tagliatella|ginos|cena|comida|almuerzo|desayuno|vermut/],
+  ["Transporte", /\buber\b|cabify|bolt|renfe|metro|\bemt\b|\btmb\b|taxi|repsol|cepsa|\bbp\b|galp|shell|gasolin|petrol|carburante|suministros petrol|parking|aparcamiento|telpark|empark|bicing|free ?now|blablacar|ouigo|iryo|alsa|peaje|autopista|audasa|aucalsa|itv|lavado/],
   ["Viajes", /ryanair|vueling|iberia|easyjet|booking|airbnb|hotel|expedia|aena|trainline|hostel/],
   ["Suscripciones", /\byt ?premium|youtube premium|suscripci|cuota mensual|netflix|spotify|hbo|\bmax\b|disney|prime video|amazon prime|apple\.com|itunes|icloud|google (one|storage|play)|youtube|adobe|github|openai|anthropic|claude|chatgpt|filmin|dazn|notion|figma|dropbox|microsoft|xbox|playstation|patreon|midjourney|canva/],
   ["Equipo", /fotocasion|fotoprix|fujifilm|canon|nikon|sony|leica|bhphoto|b&h|adorama|calumet|apple store|pccomponentes|mediamarkt|coolmod/],
-  ["Compras", /amazon|aliexpress|zara|h&m|ikea|decathlon|corte ingl|primark|fnac|shein|wallapop|vinted|uniqlo|leroy/],
-  ["Salud", /farmacia|cl[ií]nica|dental|dentist|hospital|[oó]ptica|sanitas|adeslas|fisio|gimnasio|\bgym\b|basic-?fit|holmes|anytime/],
-  ["Ocio", /cine|yelmo|cinesa|teatro|concierto|ticketmaster|entradas|steam|museo|librer|casa del libro|escape/],
+  ["Compras", /amazon|aliexpress|zara|h&m|ikea|decathlon|corte ingl|primark|fnac|shein|wallapop|vinted|uniqlo|leroy|massimo ?dutti|pull ?&? ?bear|bershka|stradivarius|mango|oysho|zalando|carhartt|primor|druni|sephora|kiko|tiger|action\b|normal\b|miniso|sklum|conforama|bricomart|bauhaus|centro comercial|c\. ?comercial|\bcc\b|milbby/],
+  ["Salud", /farmacia|cl[ií]nica|dental|dentist|hospital|[oó]ptica|sanitas|adeslas|fisio|gimnasio|\bgym\b|basic-?fit|holmes|anytime|mcfit|altafit|dir\b|crossfit|piscina|deporte|parafarmacia|m[eé]dico|psic[oó]log/],
+  ["Ocio", /cine|yelmo|cinesa|kinepolis|teatro|concierto|ticketmaster|entradas|eventbrite|fever|steam|nintendo|epic games|museo|librer|casa del libro|escape|bolera|karaoke|discoteca|pub\b|copas|festival|camping|parque|zoo|acuario/],
   ["Impuestos", /agencia tributaria|aeat|hacienda|seguridad social|tgss|ayuntamiento|\bdgt\b|impuesto|tasa municipal/],
   ["Comisiones", /\bfee\b|comisi[oó]n|plan (premium|metal|plus)|revolut (premium|metal|plus)/],
 ];
@@ -1163,7 +1268,7 @@ type Patrimonio = {
   hucha_tin: number | null;
 };
 const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null, hucha_tin: null };
-type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; banco: Banco; patrimonio: Patrimonio };
+type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; categorias_ia?: Record<string, string>; banco: Banco; patrimonio: Patrimonio };
 const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
 type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
 
@@ -1189,17 +1294,55 @@ function autoCat(m: Mov): string {
   // El concepto de un Bizum o una transferencia («YT Premium», «cena») manda sobre la persona.
   const c = (m.concepto ?? "").toLowerCase();
   if (c && m.importe < 0) for (const [cat, re] of REGLAS) if (re.test(c)) return cat;
+  if (m.tipo === "nomina") return "Nómina";
   if (m.importe > 0 && m.tipo !== "reembolso") return "Ingresos";
   const d = `${m.descripcion} ${c}`.toLowerCase();
   for (const [cat, re] of REGLAS) if (re.test(d)) return cat;
   if (m.tipo === "transferencia") return "Transferencias";
   return "Otros";
 }
+/** Categoría: la que elegiste a mano; si no, las reglas; y donde las reglas no saben (Otros o
+ *  Transferencias), la que propuso Claude. */
 function catOf(m: Mov): string {
   const manual = rvState.categorias[m.comercio];
   if (manual) return manual;
   const a = autoCat(m);
+  if (a === "Otros" || a === "Transferencias") {
+    const ia = rvState.categorias_ia?.[m.comercio];
+    if (ia && ia !== "Otros" && !(ia === "Transferencias" && a === "Otros")) return ia;
+  }
   return a === "Otros" && subsCache.some(s => s.comercio === m.comercio) ? "Suscripciones" : a;
+}
+/** Comercios de gasto que ni las reglas ni Claude ni tú habéis categorizado aún. */
+function sinCategoria(list: Mov[]) {
+  const vistos = new Map<string, Mov[]>();
+  for (const m of list) {
+    if (m.importe >= 0 || m.interno || m.divisa !== "EUR" || rvState.categorias[m.comercio]) continue;
+    const a = autoCat(m);
+    if (a !== "Otros" && a !== "Transferencias") continue;
+    (vistos.get(m.comercio) ?? vistos.set(m.comercio, []).get(m.comercio)!).push(m);
+  }
+  return vistos;
+}
+let categorizando = false;
+let categorizadoEn = 0;
+/** Tras leer el banco: Claude (Haiku) propone categoría para los comercios nuevos que las reglas no reconocen. */
+async function categorizarConClaude() {
+  if (!TAURI || categorizando || !clState?.sesion || Date.now() - categorizadoEn < 30 * 60 * 1000) return;
+  const pend = [...sinCategoria(rvState.movimientos)].filter(([k]) => !(k in (rvState.categorias_ia ?? {}))).slice(0, 120);
+  if (!pend.length) return;
+  categorizando = true;
+  categorizadoEn = Date.now();
+  const lista = pend.map(([comercio, ms]) => ({
+    comercio, descripcion: ms[ms.length - 1].descripcion,
+    concepto: ms.map(m => m.concepto).find(Boolean) ?? undefined,
+    importe_tipico: r1(mediana(ms.map(m => -m.importe))), veces: ms.length,
+  }));
+  try {
+    const ia = await invoke<Record<string, string>>("categorizar_ia", { comercios: JSON.stringify(lista), categorias: CATS.filter(c => !esIngreso(c) && c !== "Interno") });
+    renderDinero({ ...rvState, categorias_ia: ia });
+  } catch (err) { console.warn("categorizar:", err); }
+  finally { categorizando = false; }
 }
 /** Solo euros y nada interno: lo que cuenta para ingresos y gastos. */
 const cuenta = (m: Mov) => m.divisa === "EUR" && catOf(m) !== "Interno";
@@ -1258,15 +1401,17 @@ function detectarSubs(list: Mov[]): Sub[] {
   return out.sort((a, b) => b.mensual - a.mensual);
 }
 
-type Mes = { ing: number; gas: number; cats: Map<string, number> };
+type Mes = { ing: number; nom: number; gas: number; cats: Map<string, number> };
+/** Nómina e ingresos cuentan como dinero que entra. */
+const esIngreso = (c: string) => c === "Ingresos" || c === "Nómina";
 function porMes(list: Mov[]) {
   const map = new Map<string, Mes>();
   for (const m of list) {
     if (!cuenta(m)) continue;
     const k = m.fecha.slice(0, 7);
-    const r = map.get(k) ?? map.set(k, { ing: 0, gas: 0, cats: new Map() }).get(k)!;
+    const r = map.get(k) ?? map.set(k, { ing: 0, nom: 0, gas: 0, cats: new Map() }).get(k)!;
     const c = catOf(m);
-    if (c === "Ingresos") r.ing += m.importe;
+    if (esIngreso(c)) { r.ing += m.importe; if (c === "Nómina") r.nom += m.importe; }
     else {
       const g = -m.importe + m.comision;
       r.gas += g;
@@ -1397,7 +1542,7 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   const pat = svgEl("pattern", { id: "hatch", width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
   svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: K.text, "stroke-width": 1.2 }, pat);
   const l = 46, r = 552, top = 18, base = 190, gw = (r - l) / keys.length, bw = gw * .3;
-  const data = keys.map(k => meses.get(k) ?? { ing: 0, gas: 0, cats: new Map() });
+  const data = keys.map(k => meses.get(k) ?? { ing: 0, nom: 0, gas: 0, cats: new Map() });
   // Barras en su escala; la línea del patrimonio, en la suya (sus cifras van en las etiquetas).
   const accs = serie;
   const max = Math.max(1, ...data.map(d => Math.max(d.ing, d.gas)));
@@ -1417,6 +1562,9 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
     svgEl("rect", { x, y: top - 8, width: gw, height: base - top + 30, fill: K.ph, "fill-opacity": sel ? .08 : 0, class: "hit" }, g);
     const hi = zero - Y(d.ing), hg = zero - Y(d.gas);
     if (hi > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hi, width: bw, height: hi, fill: K.ph, "fill-opacity": sel ? 1 : .7, class: "grow", style: `--i:${i}` }, g);
+    // La nómina, abajo de la barra de ingresos y más iluminada.
+    const hn = zero - Y(d.nom ?? 0);
+    if (hn > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hn, width: bw, height: hn, fill: K.hi, class: "grow glow", style: `--i:${i}` }, g);
     if (hg > 0) svgEl("rect", { x: x + gw / 2 + 1, y: zero - hg, width: bw, height: hg, fill: "url(#hatch)", stroke: K.text, "stroke-width": 1, class: "grow", style: `--i:${i}` }, g);
     label(g, x + gw / 2, base + 16, MESES[mesDe(k).getMonth()], { "text-anchor": "middle", "font-size": 9, fill: sel ? K.hi : K.grid });
     const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)} · patrimonio ${eur(serie[i])}`;
@@ -1440,9 +1588,18 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
   const [lx, ly] = pts[pts.length - 1];
   svgEl("rect", { x: lx - 2.5, y: ly - 2.5, width: 5, height: 5, fill: K.hi, class: "fade" }, svg);
-  label(svg, Math.min(lx, r - 34), ly - 9, eur(accs[accs.length - 1]), { "text-anchor": "middle", fill: K.hi, class: "fade money" });
+  // Máximo de patrimonio de los 12 meses: punto y cifra sobre la línea.
+  const iMax = accs.reduce((m, v, i) => (v > accs[m] ? i : m), 0);
+  const esUltimo = iMax === accs.length - 1;
+  label(svg, Math.min(lx, r - 34), ly - 9, `${esUltimo ? "MÁX " : ""}${eur(accs[accs.length - 1])}`, { "text-anchor": "middle", fill: K.hi, class: "fade money" });
   const [fx, fy] = pts[0];
-  label(svg, fx + 2, fy - 9, eur(accs[0]), { "text-anchor": "start", fill: K.text, "font-size": 9, class: "fade money" });
+  if (iMax !== 0) label(svg, fx + 2, fy - 9, eur(accs[0]), { "text-anchor": "start", fill: K.text, "font-size": 9, class: "fade money" });
+  if (!esUltimo) {
+    const [mx, my] = pts[iMax];
+    svgEl("rect", { x: mx - 3.5, y: my - 3.5, width: 7, height: 7, fill: "none", stroke: K.hi, class: "ping" }, svg);
+    svgEl("rect", { x: mx - 3, y: my - 3, width: 6, height: 6, fill: K.hi, class: "fade glow" }, svg);
+    label(svg, Math.min(Math.max(mx, l + 50), r - 50), my - 10, `MÁX ${eur(accs[iMax])} · ${MESES[mesDe(keys[iMax]).getMonth()]}`, { "text-anchor": "middle", fill: K.hi, "font-size": 9.5, class: "fade money" });
+  }
 }
 
 function cats(m: Mes | undefined, media: Map<string, number>) {
@@ -1459,16 +1616,20 @@ function cats(m: Mes | undefined, media: Map<string, number>) {
   }).join("") + `<div class="cat total"><span>Total</span><span></span><span class="amt money">${eur(rows.reduce((s, r) => s + r[1], 0))}</span></div>`;
 }
 
+let soloSinCategoria = false;
 function movs(list: Mov[]) {
   const el = $("movs");
-  const rows = list.filter(m => m.fecha.startsWith(mesSel ?? "-")).reverse();
+  const rows = soloSinCategoria
+    ? list.filter(m => { if (!sinCategoria([m]).size) return false; const ia = rvState.categorias_ia?.[m.comercio]; return !ia || ia === "Otros"; }).reverse()
+    : list.filter(m => m.fecha.startsWith(mesSel ?? "-")).reverse();
+  $("movs-h").textContent = soloSinCategoria ? "Movimientos sin categoría clara · todos los meses" : `Movimientos · ${MESES[mesDe(mesSel ?? mesKey(new Date())).getMonth()]}`;
   $("movs-n").textContent = rows.length ? `${rows.length} MOVIMIENTO${rows.length === 1 ? "" : "S"}` : "";
   if (!rows.length) { el.innerHTML = `<p class="muted">${list.length ? "Sin movimientos este mes." : "Conecta Revolut en F5 para ver tus movimientos."}</p>`; return; }
   el.innerHTML = rows.map(m => {
     const c = catOf(m);
     const opts = CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("");
     const extra = [m.concepto ? `«${m.concepto}»` : "", m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
-    return `<div class="mov${c === "Interno" ? " int" : ""}">
+    return `<div class="mov${c === "Interno" ? " int" : c === "Nómina" ? " nomina" : ""}">
       <span class="muted">${ddmm(fechaDe(m.fecha))}</span>
       <span class="ds" title="${esc(m.descripcion)}">${esc(m.descripcion)}${extra ? `<small>${esc(extra)}</small>` : ""}</span>
       <select data-comercio="${esc(m.comercio)}" aria-label="Categoría de ${esc(m.descripcion)}">${opts}</select>
@@ -1508,7 +1669,7 @@ function briefDinero(lines: string[]) {
     const hastaDia = new Map<string, number>();
     for (const x of list) {
       const mk = x.fecha.slice(0, 7);
-      if (!prev.includes(mk) || +x.fecha.slice(8, 10) > dia || !cuenta(x) || catOf(x) === "Ingresos") continue;
+      if (!prev.includes(mk) || +x.fecha.slice(8, 10) > dia || !cuenta(x) || esIngreso(catOf(x))) continue;
       hastaDia.set(mk, (hastaDia.get(mk) ?? 0) - x.importe + x.comision);
     }
     const ref = prev.length ? prev.reduce((s, k2) => s + (hastaDia.get(k2) ?? 0), 0) / prev.length : 0;
@@ -1560,7 +1721,7 @@ function renderDinero(d: Dinero) {
   setM("ing", has ? eur(m?.ing ?? 0) : "—");
   setM("gas", has ? eur(m?.gas ?? 0) : "—");
   const ingMedia = prev.reduce((a, k) => a + meses.get(k)!.ing, 0) / (prev.length || 1);
-  setM("ing_d", prev.length ? `media ${eur(ingMedia)}` : "");
+  setM("ing_d", [m?.nom ? `nómina ${eur(m.nom)}` : "", prev.length ? `media ${eur(ingMedia)}` : ""].filter(Boolean).join(" · "));
   setM("gas_d", prev.length ? `media ${eur(gMedia)}` : "");
   const tasa = m && m.ing > 0 ? (m.ing - m.gas) / m.ing * 100 : null;
   setM("tasa", tasa === null ? "—" : `${fmt(tasa)} %`, tasa !== null && tasa < 0);
@@ -1570,7 +1731,6 @@ function renderDinero(d: Dinero) {
   const colchon = s.hay && gasto6 > 0 ? s.liquido / gasto6 : null;
   setM("colchon", colchon === null ? "—" : `${fmt(colchon, 1)} meses`, colchon !== null && colchon < 1);
   setM("cats_h", `Gasto por categoría · ${nombre}`);
-  setM("movs_h", `Movimientos · ${nombre}`);
   $("m-label").textContent = mesNombre(mesSel);
   ($("m-next") as HTMLButtonElement).disabled = mesSel >= fin;
   ($("m-prev") as HTMLButtonElement).disabled = !has || mesSel <= (conDatos[0] ?? mesSel);
@@ -1580,6 +1740,12 @@ function renderDinero(d: Dinero) {
   cats(m, media);
   movs(list);
   subs(subsCache);
+  // Revisión: comercios de gasto sin categoría clara (ni reglas, ni Claude, ni tú).
+  const pendientes = [...sinCategoria(list).keys()].filter(k => { const ia = rvState.categorias_ia?.[k]; return !ia || ia === "Otros"; }).length;
+  const rev = $<HTMLButtonElement>("revisar");
+  rev.hidden = !pendientes && !soloSinCategoria;
+  rev.textContent = soloSinCategoria ? "Volver al mes" : `${pendientes} sin categoría clara · revisar`;
+  if (datosListos) categorizarConClaude();
 
   const rango = has ? `${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "";
   const origen = d.banco?.conectado
@@ -1661,6 +1827,11 @@ function cambiarMes(delta: number) {
   renderDinero(rvState);
   countUp($("v-dinero"));
 }
+$("revisar").addEventListener("click", () => {
+  soloSinCategoria = !soloSinCategoria;
+  renderDinero(rvState);
+  if (soloSinCategoria) $("movs").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+});
 $("m-prev").addEventListener("click", () => cambiarMes(-1));
 $("m-next").addEventListener("click", () => cambiarMes(1));
 $("flow").addEventListener("click", e => {
@@ -1747,7 +1918,7 @@ function demoDinero(): Dinero {
     const y = hoy.getFullYear(), mo = hoy.getMonth() - i;
     const day = (d: number) => new Date(y, mo, d);
     add(day(1), "To Alquiler estudio", -650, "transferencia");
-    add(day(2), "Payment from Estudio Lino", 1400 + Math.round(rnd() * 900), "transferencia");
+    add(day(2), "MI NOMBRE · SABADELL", 1400 + Math.round(rnd() * 900), "nomina");
     if (rnd() > .4) add(day(18), `Payment from ${["Café Ámbar", "Nora Ruiz", "Mar Cerámica", "Bruno y Sara"][i % 4]}`, 300 + Math.round(rnd() * 800), "transferencia");
     add(day(3), "Netflix.com", i <= 1 ? -13.99 : -12.99);
     add(day(5), "Spotify", -11.99);
@@ -1823,7 +1994,7 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); renderClaude(); return; }
+  if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); renderClaude(); renderTokens(demoTokens()); return; }
   if (YOUTUBE) {
     try { renderYouTube(await invoke<YtView>("youtube_status")); }
     catch (e) { ytMsg(String(e), "err"); }
@@ -1839,7 +2010,10 @@ async function load() {
   try { render(await invoke<Status<GitHub>>("github_status")); }
   catch (e) { msg(String(e), "err"); }
   datosListos = true;
+  cargarTokens();
+  setInterval(() => cargarTokens(), 30 * 60 * 1000);
   await cargarClaude();
+  categorizarConClaude();
   programarParte();
   setInterval(programarParte, 60 * 1000);
 }

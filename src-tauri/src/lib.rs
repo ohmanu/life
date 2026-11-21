@@ -6,10 +6,12 @@ mod gmail;
 mod instagram;
 mod movimiento;
 mod secrets;
+mod tokens;
 mod youtube;
 
 use db::Db;
 use serde::Serialize;
+use serde_json::Value;
 use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -249,8 +251,9 @@ fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
 
 // ── Sonidos ───────────────────────────────────────────────────────────────
 
-/// Efectos de sonido. Viven en una carpeta local (no van a Git ni al instalador): por defecto
-/// `core-inspiration/FX` del proyecto, o la del ajuste `sonidos_dir`.
+/// Efectos de sonido. Van dentro del instalador (recursos `sonidos/`, uso personal) pero no al
+/// repositorio público (`src-tauri/sonidos/` está en .gitignore). Si faltan, se buscan en el
+/// ajuste `sonidos_dir` o en `core-inspiration/FX`.
 const SONIDOS: [(&str, &str); 4] = [
     ("pestana", "0x09-wapon-select.wav"),
     ("encargo", "0x10-codec-call.wav"),
@@ -262,12 +265,21 @@ const SONIDOS_DIR: &str = r"C:\proyects\life\core-inspiration\FX";
 #[tauri::command]
 fn sonido(app: AppHandle, nombre: String) -> Result<tauri::ipc::Response, String> {
     let archivo = SONIDOS.iter().find(|(k, _)| *k == nombre).map(|(_, f)| *f).ok_or("Sonido desconocido.")?;
-    let dir = {
+    let ajuste = {
         let state = app.state::<Db>();
         let conn = state.0.lock().map_err(|e| e.to_string())?;
-        db::ajuste(&conn, "sonidos_dir").map_err(|e| e.to_string())?.unwrap_or_else(|| SONIDOS_DIR.to_string())
+        db::ajuste(&conn, "sonidos_dir").map_err(|e| e.to_string())?
     };
-    let bytes = std::fs::read(std::path::Path::new(&dir).join(archivo)).map_err(|_| format!("No encuentro {archivo} en {dir}."))?;
+    let mut sitios: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(r) = app.path().resource_dir() {
+        sitios.push(r.join("sonidos"));
+    }
+    sitios.extend(ajuste.map(std::path::PathBuf::from));
+    sitios.push(std::path::PathBuf::from(SONIDOS_DIR));
+    let bytes = sitios
+        .iter()
+        .find_map(|d| std::fs::read(d.join(archivo)).ok())
+        .ok_or_else(|| format!("No encuentro el sonido {archivo}."))?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -297,11 +309,12 @@ async fn radar_auto(app: AppHandle, contexto: String) -> Result<Vec<db::Semana>,
     let hoy = chrono::Local::now();
     let semana = semana_iso(hoy.date_naive());
     let texto = format!("Hoy es {} (semana {semana}). Datos de LIFE (JSON):\n{contexto}", hoy.format("%A %d/%m/%Y"));
-    let res = tauri::async_runtime::spawn_blocking(move || {
-        claude::preguntar(&dir, &modelo, claude::SISTEMA_RADAR, &texto, std::time::Duration::from_secs(180))
+    let (res, usos) = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar_uso(&dir, &modelo, claude::SISTEMA_RADAR, &texto, std::time::Duration::from_secs(180))
     })
     .await
     .map_err(|e| e.to_string())??;
+    anotar_tokens(&app, &usos);
     let v = claude::json_de(&res).ok_or("Claude no devolvió las notas del radar en el formato esperado.")?;
     let mut valores = std::collections::HashMap::new();
     for e in EJES {
@@ -327,6 +340,53 @@ struct ClaudeView {
     modelo: String,
     diario: Option<db::Parte>,
     semanal: Option<db::Parte>,
+}
+
+/// Suma los tokens de una llamada de LIFE a Claude al panel de tokens.
+fn anotar_tokens(app: &AppHandle, usos: &[tokens::Uso]) {
+    let state = app.state::<Db>();
+    if let Ok(conn) = state.0.lock() {
+        let _ = tokens::registrar_life(&conn, usos);
+    }
+}
+
+#[derive(Serialize)]
+struct TokensView {
+    filas: Vec<tokens::Fila>,
+    leido: Option<String>,
+}
+
+/// Lee lo nuevo de los registros de Claude Code (si hace más de 10 min) y devuelve 35 días.
+#[tauri::command]
+async fn tokens_status(app: AppHandle, forzar: bool) -> Result<TokensView, String> {
+    let (toca, leido) = {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        let leido = db::ajuste(&conn, "tokens_leido").map_err(|e| e.to_string())?;
+        let toca = forzar
+            || leido
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::minutes(10));
+        (toca, leido)
+    };
+    let mut leido = leido;
+    if let (true, Some(base)) = (toca, tokens::carpeta()) {
+        let a = app.clone();
+        tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            let state = a.state::<Db>();
+            let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+            tokens::escanear(&mut conn, &base).map_err(|e| e.to_string())?;
+            db::set_ajuste(&conn, "tokens_leido", &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        leido = Some(gmail::utc(chrono::Utc::now()));
+    }
+    let desde = (chrono::Local::now() - chrono::Duration::days(35)).format("%Y-%m-%d").to_string();
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(TokensView { filas: tokens::filas(&conn, &desde).map_err(|e| e.to_string())?, leido })
 }
 
 /// Carpeta vacía desde la que se llama a Claude Code (sin CLAUDE.md ni ajustes de proyecto).
@@ -387,11 +447,12 @@ async fn parte_generar(app: AppHandle, tipo: String, contexto: String) -> Result
     let modelo = claude_modelo(&app);
     let hoy = chrono::Local::now();
     let texto = format!("Hoy es {}. Datos de LIFE (JSON):\n{contexto}", hoy.format("%A %d/%m/%Y, %H:%M"));
-    let res = tauri::async_runtime::spawn_blocking(move || {
-        claude::preguntar(&dir, &modelo, sistema, &texto, std::time::Duration::from_secs(180))
+    let (res, usos) = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar_uso(&dir, &modelo, sistema, &texto, std::time::Duration::from_secs(180))
     })
     .await
     .map_err(|e| e.to_string())??;
+    anotar_tokens(&app, &usos);
     let parte = db::Parte {
         fecha: hoy.format("%Y-%m-%d").to_string(),
         tipo,
@@ -402,6 +463,40 @@ async fn parte_generar(app: AppHandle, tipo: String, contexto: String) -> Result
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::guardar_parte(&conn, &parte).map_err(|e| e.to_string())?;
     Ok(parte)
+}
+
+/// Claude (Haiku) propone categoría para comercios que las reglas no reconocen. Solo recibe
+/// nombres de comercio, conceptos e importes. Se guarda en `categorias_ia`; lo manual manda.
+#[tauri::command]
+async fn categorizar_ia(app: AppHandle, comercios: String, categorias: Vec<String>) -> Result<std::collections::HashMap<String, String>, String> {
+    let dir = claude_dir(&app)?;
+    let texto = format!("Categorías permitidas: {}\nComercios (JSON): {comercios}", serde_json::to_string(&categorias).map_err(|e| e.to_string())?);
+    let (res, usos) = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar_uso(&dir, "haiku", claude::SISTEMA_CATEGORIAS, &texto, std::time::Duration::from_secs(180))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    anotar_tokens(&app, &usos);
+    let v = claude::json_de(&res).ok_or("Claude no devolvió las categorías en el formato esperado.")?;
+    let pedidos: std::collections::HashSet<String> = serde_json::from_str::<Vec<Value>>(&comercios)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|c| c["comercio"].as_str().map(str::to_string))
+        .collect();
+    let mut out = std::collections::HashMap::new();
+    if let Some(obj) = v.as_object() {
+        for (k, c) in obj {
+            if let Some(c) = c.as_str().filter(|c| categorias.iter().any(|x| x == c)) {
+                if pedidos.contains(k) {
+                    out.insert(k.clone(), c.to_string());
+                }
+            }
+        }
+    }
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::guardar_categorias_ia(&conn, &out, &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())?;
+    db::categorias_ia(&conn).map_err(|e| e.to_string())
 }
 
 /// Pregunta libre al panel, respondida con los datos que manda la interfaz.
@@ -417,11 +512,13 @@ async fn preguntar(app: AppHandle, pregunta: String, contexto: String) -> Result
         "Hoy es {}.\nPregunta: {pregunta}\n\nDatos de LIFE (JSON):\n{contexto}",
         chrono::Local::now().format("%A %d/%m/%Y")
     );
-    tauri::async_runtime::spawn_blocking(move || {
-        claude::preguntar(&dir, &modelo, claude::SISTEMA_PREGUNTA, &texto, std::time::Duration::from_secs(180))
+    let (res, usos) = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar_uso(&dir, &modelo, claude::SISTEMA_PREGUNTA, &texto, std::time::Duration::from_secs(180))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    anotar_tokens(&app, &usos);
+    Ok(res)
 }
 
 // ── YouTube ───────────────────────────────────────────────────────────────
@@ -777,6 +874,8 @@ struct DineroView {
     movimientos: Vec<movimiento::Mov>,
     /// Categorías que elegiste a mano, por comercio.
     categorias: std::collections::HashMap<String, String>,
+    /// Categorías que propuso Claude para comercios desconocidos.
+    categorias_ia: std::collections::HashMap<String, String>,
     banco: BancoView,
     patrimonio: Patrimonio,
 }
@@ -887,6 +986,7 @@ fn dinero_view(conn: &rusqlite::Connection) -> Result<DineroView, String> {
     Ok(DineroView {
         movimientos: db::movs(conn).map_err(e)?,
         categorias: db::categorias(conn).map_err(e)?,
+        categorias_ia: db::categorias_ia(conn).map_err(e)?,
         banco: banco_view(conn)?,
         patrimonio: patrimonio(conn),
     })
@@ -1329,7 +1429,9 @@ pub fn run() {
             claude_status,
             claude_ajustes,
             parte_generar,
-            preguntar
+            preguntar,
+            categorizar_ia,
+            tokens_status
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");
@@ -1342,5 +1444,38 @@ mod tests {
         let d = |y, m, dd| chrono::NaiveDate::from_ymd_opt(y, m, dd).unwrap();
         assert_eq!(super::semana_iso(d(2026, 11, 21)), "2026-W47");
         assert_eq!(super::semana_iso(d(2027, 1, 1)), "2026-W53");
+    }
+}
+
+#[cfg(test)]
+mod diagnostico_banco {
+    /// Lectura real (una consulta al banco): `cargo test origen_ingresos -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn origen_ingresos() {
+        let key = super::secrets::get("db_key").unwrap().unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap()).join("com.glutamato.life");
+        let conn = super::db::open(&dir, &key).unwrap();
+        let cuentas: Vec<super::banco::Cuenta> = serde_json::from_str(&super::db::ajuste(&conn, "banco_cuentas").unwrap().unwrap()).unwrap();
+        drop(conn);
+        let cliente = super::banco_cliente().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let desde = (chrono::Local::now() - chrono::Duration::days(60)).format("%Y-%m-%d").to_string();
+        for c in &cuentas {
+            let raw = rt.block_on(cliente.movimientos(&c.uid, &desde)).unwrap();
+            for t in raw.iter().filter(|t| t["credit_debit_indicator"] == "CRDT") {
+                let iban = t["debtor_account"]["iban"].as_str().unwrap_or("");
+                let entidad = if iban.len() >= 8 { &iban[4..8] } else { "" };
+                println!(
+                    "{} {:>9} deudor={:?} entidad={} agente={:?} concepto={:?}",
+                    t["booking_date"].as_str().unwrap_or(""),
+                    t["transaction_amount"]["amount"].as_str().unwrap_or(""),
+                    t["debtor"]["name"].as_str(),
+                    entidad,
+                    t["debtor_agent"].get("bic_fi").and_then(|v| v.as_str()),
+                    t["remittance_information"]
+                );
+            }
+        }
     }
 }

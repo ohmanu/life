@@ -15,6 +15,8 @@
   --alert: #ff5a4a;
   --glow: 0 0 6px rgba(56, 242, 196, .55);
   --glow-f: drop-shadow(0 0 3px rgba(56, 242, 196, .75));
+  --glow-hi: 0 0 8px rgba(228, 255, 247, .65);   /* brillo blanco: nómina */
+  --hi-tint: rgba(228, 255, 247, .07);
 
   --f: "IBM Plex Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
   --f-jp: "Yu Gothic UI", "Meiryo", "Noto Sans JP", sans-serif;
@@ -303,6 +305,12 @@ button { font: inherit; }
 .ask-out b { color: var(--hi); font-weight: 500; }
 .ask-out .wait { color: var(--ph); }
 #cl-modelo { font: inherit; background: var(--bg-2); color: var(--text); border: 1px solid var(--grid); padding: 4px 6px; }
+/* tokens de claude */
+.tk-tablas { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); margin-top: var(--s3); }
+.legend .tk-0 { background: var(--ph); }
+.legend .tk-1 { background: var(--hi); }
+.legend .tk-2 { border: 1px solid var(--text); background: repeating-linear-gradient(45deg, var(--text) 0 1px, transparent 1px 3px); }
+.legend .tk-3 { background: var(--grid); }
 /* youtube */
 .kpis.two { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
 #yt-chart { margin: var(--s3) 0 var(--s2); }
@@ -358,3 +366,7 @@ button { font: inherit; }
   .app::before { display: none; }
 }
 .foot .alarm { color: var(--alert); }
+/* nómina: más iluminada que el resto de ingresos */
+.mov.nomina { border-left: 2px solid var(--hi); padding-left: 6px; background: linear-gradient(90deg, var(--hi-tint), transparent 60%); }
+.mov.nomina .ds, .mov.nomina .amt { color: var(--hi); text-shadow: var(--glow-hi); }
+.legend .lg-nom { background: var(--hi); box-shadow: var(--glow-hi); }

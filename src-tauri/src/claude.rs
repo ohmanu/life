@@ -58,7 +58,13 @@ pub fn estado(dir: &Path) -> Estado {
 }
 
 /// Pregunta a Claude (bloqueante). `sistema` fija el tono y el formato; `texto` lleva los datos.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn preguntar(dir: &Path, modelo: &str, sistema: &str, texto: &str, limite: Duration) -> Result<String, String> {
+    preguntar_uso(dir, modelo, sistema, texto, limite).map(|(r, _)| r)
+}
+
+/// Como `preguntar`, y además devuelve los tokens gastados por modelo.
+pub fn preguntar_uso(dir: &Path, modelo: &str, sistema: &str, texto: &str, limite: Duration) -> Result<(String, Vec<crate::tokens::Uso>), String> {
     let exe = ejecutable().ok_or("Claude Code no está instalado (F5 → Claude).")?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let mut hijo = comando(&exe, dir)
@@ -99,6 +105,7 @@ pub fn preguntar(dir: &Path, modelo: &str, sistema: &str, texto: &str, limite: D
         format!("Claude Code no respondió bien. {}", err.lines().next().unwrap_or(""))
     })?;
     let res = v["result"].as_str().unwrap_or("").trim().to_string();
+    let usos = crate::tokens::uso_de_respuesta(&v, modelo);
     if v["is_error"].as_bool() == Some(true) {
         let low = res.to_lowercase();
         return Err(if low.contains("authenticate") || low.contains("login") || low.contains("oauth") {
@@ -112,7 +119,7 @@ pub fn preguntar(dir: &Path, modelo: &str, sistema: &str, texto: &str, limite: D
     if res.is_empty() {
         return Err("Claude devolvió una respuesta vacía.".into());
     }
-    Ok(res)
+    Ok((res, usos))
 }
 
 /// Tono y formato del parte. Los datos van aparte, en el texto.
@@ -145,6 +152,14 @@ pub fn json_de(texto: &str) -> Option<Value> {
     let b = texto.rfind('}')?;
     serde_json::from_str(texto.get(a..=b)?).ok()
 }
+
+pub const SISTEMA_CATEGORIAS: &str = "Clasificas comercios de movimientos de una cuenta bancaria en España. \
+Te doy una lista JSON de comercios (con descripción tal como sale en el banco, concepto si lo hay e importe típico) y la \
+lista de categorías permitidas. Elige UNA categoría permitida para cada comercio, pensando en lo que vende ese negocio \
+(cadenas de supermercados → Súper; bares, cafeterías, comida a domicilio → Restaurantes; gasolineras, parking, peajes, \
+transporte → Transporte; cines, conciertos, juegos → Ocio; etc.). Un pago a una persona sin concepto claro es \
+«Transferencias». Si de verdad no lo sabes, «Otros». Responde SOLO con un objeto JSON {\"clave del comercio\": \"Categoría\"} \
+con todas las claves que te doy, sin texto alrededor.";
 
 pub const SISTEMA_PREGUNTA: &str = "Eres LIFE, un panel personal. Respondes preguntas con los datos del usuario que \
 vienen en el mensaje (JSON). Español de España, tuteando, directo y breve (como mucho 6 líneas). Haz las cuentas \
@@ -196,5 +211,25 @@ mod tests_radar {
         for e in ["trabajo", "dinero", "creacion", "cuerpo", "gente", "descanso"] {
             assert!(v[e].as_f64().is_some_and(|n| (0.0..=10.0).contains(&n)), "{e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_categorias {
+    /// Llamada real (usa tu plan): `cargo test categorias_real -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn categorias_real() {
+        let dir = std::env::temp_dir().join("life-claude-prueba");
+        let cats = r#"["Casa y facturas","Súper","Restaurantes","Transporte","Suscripciones","Compras","Equipo","Ocio","Salud","Viajes","Impuestos","Comisiones","Efectivo","Transferencias","Otros"]"#;
+        let lista = r#"[{"comercio":"plk cc los fresn","descripcion":"Plk 16086 Cc Los Fresn","importe_tipico":27.5},
+            {"comercio":"manolo bakes","descripcion":"Manolo Bakes","importe_tipico":6.9},
+            {"comercio":"andreas christodoulou","descripcion":"Andreas Christodoulou","importe_tipico":1243},
+            {"comercio":"suministros petroliferos s a","descripcion":"SUMINISTROS PETROLIFEROS S. A.","importe_tipico":3572},
+            {"comercio":"hostini booking","descripcion":"Hostini Booking","importe_tipico":1583},
+            {"comercio":"bizum daniel o","descripcion":"Bizum · Daniel O.","concepto":"Cena viernes","importe_tipico":11.7}]"#;
+        let r = super::preguntar(&dir, "haiku", super::SISTEMA_CATEGORIAS, &format!("Categorías permitidas: {cats}\nComercios (JSON): {lista}"), std::time::Duration::from_secs(180)).unwrap();
+        println!("{r}");
+        assert!(super::json_de(&r).is_some_and(|v| v.as_object().is_some_and(|o| o.len() == 6)));
     }
 }

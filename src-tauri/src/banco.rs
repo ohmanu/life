@@ -228,6 +228,15 @@ fn hash(s: &str) -> String {
     format!("{h:016x}")
 }
 
+/// Entidad de la cuenta de la nómina: Banco Sabadell.
+const ENTIDAD_NOMINA: &str = "0081";
+
+/// Código de entidad de un IBAN español («ES12 0081 …» → «0081»).
+fn entidad(iban: &str) -> Option<&str> {
+    let i: &str = iban.trim();
+    (i.len() >= 8 && i.starts_with("ES")).then(|| &i[4..8])
+}
+
 fn es_sin_concepto(s: &str) -> bool {
     let n = s.trim().to_lowercase();
     n.is_empty() || n == "sin concepto" || n == "no concept" || n == "-"
@@ -282,6 +291,10 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
         "otro"
     }
     .to_string();
+    // Nómina: lo que entra desde una cuenta de Banco Sabadell (entidad 0081 en el IBAN de origen).
+    let iban_origen = s(&t["debtor_account"]["iban"]).unwrap_or_default();
+    let es_nomina = !debito && entidad(&iban_origen) == Some(ENTIDAD_NOMINA);
+    let tipo = if es_nomina { "nomina".to_string() } else { tipo };
     let interno = tipo == "cambio"
         || propias.iter().any(|p| p.len() >= 4 && todo.contains(&p.to_lowercase()))
         || HUCHA.iter().any(|k| todo.contains(k));
@@ -302,6 +315,7 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
             let desc = if otra_parte.is_some() { descripcion } else { format!("Bizum · {persona}") };
             (desc, texto)
         }
+        _ if es_nomina => (descripcion, Some("Desde Sabadell".to_string())),
         _ => {
             let c = concepto.filter(|c| c.trim() != descripcion.trim() && !es_sin_concepto(c));
             (descripcion, c)
@@ -394,6 +408,23 @@ mod tests {
         let m = a_mov(&tr, &cuenta(), &[]).unwrap();
         assert_eq!(m.descripcion, "Ana Pérez");
         assert_eq!(m.concepto.as_deref(), Some("Cena cumpleaños"));
+    }
+
+    #[test]
+    fn lo_que_llega_de_sabadell_es_nomina() {
+        let t = json!({
+            "status": "BOOK", "booking_date": "2026-10-30",
+            "transaction_amount": {"amount": "1500.00", "currency": "EUR"}, "credit_debit_indicator": "CRDT",
+            "debtor": {"name": "MANUEL CASAS"}, "debtor_account": {"iban": "ES1200810000000000000000"},
+            "remittance_information": ["OBAE277K9YALAOV5E", "OBA topup from MANUEL CASAS"]
+        });
+        let m = a_mov(&t, &cuenta(), &[]).unwrap();
+        assert_eq!(m.tipo, "nomina");
+        assert_eq!(m.concepto.as_deref(), Some("Desde Sabadell"));
+        assert!(!m.interno);
+        let mut otro = t.clone();
+        otro["debtor_account"]["iban"] = json!("ES1221000000000000000000");
+        assert_ne!(a_mov(&otro, &cuenta(), &[]).unwrap().tipo, "nomina");
     }
 
     #[test]

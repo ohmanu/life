@@ -12,3 +12,6 @@ src-tauri/gen/schemas/
 *.db-*
 Thumbs.db
 .DS_Store
+
+# Efectos de sonido con derechos de autor: van en el instalador (uso personal), no al repositorio público
+src-tauri/sonidos/
