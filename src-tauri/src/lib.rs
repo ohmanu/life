@@ -374,9 +374,12 @@ async fn tokens_status(app: AppHandle, forzar: bool) -> Result<TokensView, Strin
     if let (true, Some(base)) = (toca, tokens::carpeta()) {
         let a = app.clone();
         tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            // La base solo se bloquea un instante al principio y al final; leer los archivos va sin ella.
             let state = a.state::<Db>();
+            let offs = { let conn = state.0.lock().map_err(|e| e.to_string())?; tokens::offsets(&conn).map_err(|e| e.to_string())? };
+            let lecturas = tokens::leer(&base, &offs);
             let mut conn = state.0.lock().map_err(|e| e.to_string())?;
-            tokens::escanear(&mut conn, &base).map_err(|e| e.to_string())?;
+            tokens::guardar(&mut conn, &lecturas).map_err(|e| e.to_string())?;
             db::set_ajuste(&conn, "tokens_leido", &gmail::utc(chrono::Utc::now())).map_err(|e| e.to_string())
         })
         .await

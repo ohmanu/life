@@ -5,7 +5,7 @@
 //! - Las llamadas de LIFE a Claude Code (parte, preguntas, radar, categorías), que no dejan registro.
 //! Los chats de claude.ai y el porcentaje de los límites del plan no están disponibles.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -116,12 +116,25 @@ fn jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Lee lo nuevo de los registros de Claude Code y lo suma. Devuelve cuántos mensajes nuevos contó.
-pub fn escanear(conn: &mut Connection, base: &Path) -> rusqlite::Result<usize> {
+/// Lo leído de un archivo: hasta dónde y los mensajes nuevos (id, fecha, proyecto, uso).
+pub struct Lectura {
+    ruta: String,
+    offset: u64,
+    mensajes: Vec<(String, String, String, Uso)>,
+}
+
+/// Paso 1 (con la base, un instante): hasta dónde se leyó cada archivo.
+pub fn offsets(conn: &Connection) -> rusqlite::Result<HashMap<String, u64>> {
+    let mut st = conn.prepare("SELECT ruta, offset FROM tokens_archivos")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
+    rows.collect()
+}
+
+/// Paso 2 (sin la base): lee lo nuevo de cada registro. Es lo lento la primera vez.
+pub fn leer(base: &Path, offsets: &HashMap<String, u64>) -> Vec<Lectura> {
     let mut archivos = Vec::new();
     jsonl(base, &mut archivos);
-    let tx = conn.transaction()?;
-    let mut nuevos = 0;
+    let mut out = Vec::new();
     for ruta in archivos {
         let clave = ruta.to_string_lossy().to_string();
         let proy = ruta
@@ -132,17 +145,11 @@ pub fn escanear(conn: &mut Connection, base: &Path) -> rusqlite::Result<usize> {
             .unwrap_or_else(|| "sin proyecto".into());
         let Ok(mut f) = std::fs::File::open(&ruta) else { continue };
         let largo = f.metadata().map(|m| m.len()).unwrap_or(0);
-        let mut desde: u64 = tx
-            .query_row("SELECT offset FROM tokens_archivos WHERE ruta = ?1", [&clave], |r| r.get::<_, i64>(0))
-            .optional()?
-            .unwrap_or(0) as u64;
+        let mut desde = offsets.get(&clave).copied().unwrap_or(0);
         if desde > largo {
             desde = 0; // el archivo se reescribió
         }
-        if desde == largo {
-            continue;
-        }
-        if f.seek(SeekFrom::Start(desde)).is_err() {
+        if desde == largo || f.seek(SeekFrom::Start(desde)).is_err() {
             continue;
         }
         let mut buf = Vec::new();
@@ -151,6 +158,7 @@ pub fn escanear(conn: &mut Connection, base: &Path) -> rusqlite::Result<usize> {
         }
         // Solo líneas completas: lo que esté a medio escribir se lee la próxima vez.
         let Some(fin) = buf.iter().rposition(|b| *b == b'\n') else { continue };
+        let mut mensajes = Vec::new();
         for linea in buf[..fin].split(|b| *b == b'\n') {
             if !linea.windows(7).any(|w| w == b"\"usage\"") {
                 continue;
@@ -164,32 +172,57 @@ pub fn escanear(conn: &mut Connection, base: &Path) -> rusqlite::Result<usize> {
             if modelo.starts_with('<') {
                 continue; // mensajes sintéticos
             }
-            if tx.execute("INSERT OR IGNORE INTO tokens_vistos (id) VALUES (?1)", [id])? == 0 {
-                continue; // el mismo mensaje en otra línea
-            }
             let u = &m["usage"];
             let fecha = v["timestamp"]
                 .as_str()
                 .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
                 .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
-            let uso = Uso {
-                modelo: modelo.to_string(),
-                entrada: n(&u["input_tokens"]),
-                salida: n(&u["output_tokens"]),
-                cache_creacion: n(&u["cache_creation_input_tokens"]),
-                cache_lectura: n(&u["cache_read_input_tokens"]),
-            };
-            sumar(&tx, &fecha, &proy, &uso, 1)?;
+            mensajes.push((
+                id.to_string(),
+                fecha,
+                proy.clone(),
+                Uso {
+                    modelo: modelo.to_string(),
+                    entrada: n(&u["input_tokens"]),
+                    salida: n(&u["output_tokens"]),
+                    cache_creacion: n(&u["cache_creation_input_tokens"]),
+                    cache_lectura: n(&u["cache_read_input_tokens"]),
+                },
+            ));
+        }
+        out.push(Lectura { ruta: clave, offset: desde + fin as u64 + 1, mensajes });
+    }
+    out
+}
+
+/// Paso 3 (con la base, un instante): suma lo nuevo; cada mensaje cuenta una vez.
+pub fn guardar(conn: &mut Connection, lecturas: &[Lectura]) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    let mut nuevos = 0;
+    for l in lecturas {
+        for (id, fecha, proy, uso) in &l.mensajes {
+            if tx.execute("INSERT OR IGNORE INTO tokens_vistos (id) VALUES (?1)", [id])? == 0 {
+                continue; // el mismo mensaje en otra línea
+            }
+            sumar(&tx, fecha, proy, uso, 1)?;
             nuevos += 1;
         }
         tx.execute(
             "INSERT INTO tokens_archivos (ruta, offset) VALUES (?1, ?2) ON CONFLICT(ruta) DO UPDATE SET offset = excluded.offset",
-            params![clave, (desde + fin as u64 + 1) as i64],
+            params![l.ruta, l.offset as i64],
         )?;
     }
     tx.commit()?;
     Ok(nuevos)
+}
+
+/// Los tres pasos seguidos (pruebas y lecturas pequeñas).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn escanear(conn: &mut Connection, base: &Path) -> rusqlite::Result<usize> {
+    let o = offsets(conn)?;
+    let l = leer(base, &o);
+    guardar(conn, &l)
 }
 
 pub fn filas(conn: &Connection, desde: &str) -> rusqlite::Result<Vec<Fila>> {
