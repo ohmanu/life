@@ -440,10 +440,18 @@ function brief() {
     if (YOUTUBE) briefYouTube(lines);
     briefRadar(lines);
     briefGitHub(lines);
-    const html = lines.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
+    // El parte de Claude manda si está activo y es de hoy; si no, el parte local de siempre.
+    const p = parteActual();
+    const vistas = p ? lineasClaude(p.texto) : lines;
+    const html = vistas.map((l, i) => `<li data-k="${pad(i + 1)}" style="--i:${i}"><span>${l}</span></li>`).join("");
     if (html !== briefHtml) { $("brief").innerHTML = html; briefHtml = html; }
     const last = [ghState.snapshot?.synced_at, gmState.synced_at, igState.snapshot?.synced_at, rvState.banco?.sincronizado].filter(Boolean).sort().pop();
-    $("brief-time").textContent = last ? `ACTUALIZADO ${stamp(last!)}` : "";
+    if (!generando) {
+      $("parte-origen").textContent = p
+        ? `CLAUDE · ${(clState?.modelo ?? "sonnet").toUpperCase()}${p.tipo === "semanal" ? " · SEMANA" : ""}`
+        : clState?.activo && clState.sesion && clError ? "GENERADO EN LOCAL · CLAUDE NO RESPONDIÓ" : "GENERADO EN LOCAL";
+    }
+    $("brief-time").textContent = p ? `ESCRITO ${stamp(p.generado)}` : last ? `ACTUALIZADO ${stamp(last!)}` : "";
   });
 }
 
@@ -932,6 +940,189 @@ function demoYouTube(): YtView {
     },
   };
 }
+
+/* ---------- claude: parte y preguntas ---------- */
+type Parte = { fecha: string; tipo: string; texto: string; generado: string };
+type ClaudeView = { instalado: boolean; sesion: boolean; metodo: string | null; activo: boolean; modelo: string; diario: Parte | null; semanal: Parte | null };
+let clState: ClaudeView | null = null;
+let parteVista: "diario" | "semanal" = "diario";
+let datosListos = false;
+let generando = false;
+let ultimoFallo = 0;
+let clError = "";
+
+const hoyStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const r1 = (n: number) => Math.round(n * 100) / 100;
+
+/** Lo que se le cuenta a Claude: cifras y estados, sin nombres, correos ni teléfonos de clientes. */
+function contexto() {
+  const ahora = new Date();
+  const enc = gmState.encargos;
+  const encargos = {
+    sin_responder: enc.filter(sinResponder).map(e => ({ tipo: e.tipo, que: e.que, horas_esperando: Math.round(hoursSince(e.recibido)), presupuesto: e.presupuesto || undefined })),
+    abiertos_por_estado: Object.fromEntries(COLUMNAS.map(c => [c, enc.filter(e => e.estado === c).length])),
+    este_mes: enc.filter(e => e.recibido.slice(0, 7) === mesKey(ahora)).length,
+    ultimos_12_meses: enc.filter(e => Date.now() - new Date(e.recibido).getTime() < 365 * DIA).length,
+  };
+  let dinero: Record<string, unknown> | undefined;
+  if (rvState.movimientos.length) {
+    const meses = porMes(rvState.movimientos);
+    const keys = [...meses.keys()].sort().slice(-13);
+    const s = saldos(rvState.movimientos, rvState.patrimonio ?? SIN_PATRIMONIO);
+    const mes = mesKey(ahora);
+    const gastosMes = rvState.movimientos
+      .filter(m => m.fecha.startsWith(mes) && cuenta(m) && catOf(m) !== "Ingresos" && m.importe < 0)
+      .sort((a, b) => a.importe - b.importe).slice(0, 15)
+      .map(m => ({ fecha: m.fecha.slice(0, 10), comercio: m.descripcion, importe: r1(-m.importe), categoria: catOf(m) }));
+    dinero = {
+      moneda: "EUR",
+      patrimonio: { total: r1(s.total), cuenta: r1(s.cuenta), hucha_estimada: r1(s.ahorro), oro: r1(s.oro) },
+      por_mes: keys.map(k => { const m = meses.get(k)!; return { mes: k, ingresos: r1(m.ing), gastos: r1(m.gas), por_categoria: Object.fromEntries([...m.cats].map(([c, v]) => [c, r1(v)])) }; }),
+      gastos_mayores_este_mes: gastosMes,
+      suscripciones: subsCache.map(x => ({ nombre: x.nombre, cada: x.cada, importe: r1(x.importe), proximo_cobro: `${x.proximo.getFullYear()}-${pad(x.proximo.getMonth() + 1)}-${pad(x.proximo.getDate())}`, subida: x.sube ? r1(x.sube) : undefined })),
+    };
+  }
+  const ig = igState.snapshot;
+  const instagram = ig ? {
+    seguidores: ig.followers, historia_seguidores: ig.historia.slice(-30), alcance_30d: ig.reach_30, visualizaciones_30d: ig.views_30,
+    interacciones_30d: ig.interactions_30, cuentas_que_interactuan_30d: ig.engaged_30,
+    publicaciones: ig.posts.slice(0, 15).map(p => ({ fecha: p.timestamp.slice(0, 10), tipo: p.product, texto: p.caption.slice(0, 80), alcance: p.reach, vistas: p.views, me_gusta: p.likes, comentarios: p.comments, guardados: p.saved, compartidos: p.shares })),
+  } : undefined;
+  const gh = ghState.snapshot;
+  const github = gh ? {
+    racha_dias: gh.streak, record_racha: gh.longest, contribuciones_90d: gh.last_90, contribuciones_ano: gh.total_year,
+    contribuciones_7d: gh.days.slice(-7).reduce((s, d) => s + d.count, 0), prs_abiertos: gh.open_prs, issues_abiertos: gh.open_issues,
+    repos: gh.repos.map(r => ({ nombre: r.name, ultimo_push: r.pushed_at.slice(0, 10) })),
+  } : undefined;
+  const radar = radarState.slice(-8).map(s => ({ semana: s.semana, ...s.valores, nota: s.nota || undefined }));
+  return JSON.stringify({ encargos, dinero, instagram, github, radar_vida: radar.length ? radar : undefined });
+}
+
+/** Texto de Claude → líneas del parte: **negrita** y «!» al principio para alarmas. */
+function lineasClaude(texto: string) {
+  return texto.split(/\r?\n/).map(l => l.replace(/^\s*(?:[-*•·]|\d+[.)])\s+/, "").trim()).filter(Boolean).slice(0, 9).map(l => {
+    const alarma = l.startsWith("!");
+    const html = esc(alarma ? l.slice(1).trim() : l).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    return alarma ? `<span class="alarm">${html}</span>` : html;
+  });
+}
+
+/** El parte que toca enseñar, si Claude está activo y lo hay. */
+function parteActual(): Parte | null {
+  if (!clState?.activo) return null;
+  if (parteVista === "semanal" && clState.semanal) return clState.semanal;
+  const d = clState.diario;
+  return d && d.fecha === hoyStr() ? d : null;
+}
+
+function renderParteControles() {
+  const s = clState;
+  const semanalReciente = !!s?.activo && !!s.semanal && Date.now() - new Date(s.semanal.fecha + "T00:00:00").getTime() < 2 * DIA;
+  $("parte-tabs").hidden = !semanalReciente;
+  if (!semanalReciente && parteVista === "semanal") parteVista = "diario";
+  document.querySelectorAll<HTMLElement>("[data-parte]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.parte === parteVista)));
+  $("parte-h").textContent = parteVista === "semanal" ? "Parte de la semana" : "Parte del día";
+  $("parte-regen").hidden = !(TAURI && s?.sesion && s.activo);
+}
+
+async function generarParte(tipo: "diario" | "semanal", aMano = false) {
+  if (!TAURI || generando) return;
+  generando = true;
+  $("parte-origen").textContent = "CLAUDE ESCRIBIENDO…";
+  if (aMano) { const b = $<HTMLButtonElement>("parte-regen"); b.disabled = true; }
+  try {
+    const p = await invoke<Parte>("parte_generar", { tipo, contexto: contexto() });
+    if (clState) clState = { ...clState, [tipo]: p };
+    if (tipo === "semanal") parteVista = "semanal";
+    clError = "";
+  } catch (err) {
+    clError = String(err);
+    ultimoFallo = Date.now();
+  } finally {
+    generando = false;
+    $<HTMLButtonElement>("parte-regen").disabled = false;
+    renderParteControles();
+    brief();
+    renderClaude();
+  }
+}
+
+/** Cada minuto: a partir de las 7:30, el parte del día (y el domingo, el semanal) si aún no está. */
+async function programarParte() {
+  const s = clState;
+  if (!TAURI || !datosListos || generando || !s?.sesion || !s.activo) return;
+  if (Date.now() - ultimoFallo < 30 * 60 * 1000) return;
+  const ahora = new Date();
+  if (ahora.getHours() * 60 + ahora.getMinutes() < 7 * 60 + 30) return;
+  const hoy = hoyStr();
+  if (s.diario?.fecha !== hoy) { await generarParte("diario"); return; }
+  if (ahora.getDay() === 0 && s.semanal?.fecha !== hoy) await generarParte("semanal");
+}
+
+function renderClaude() {
+  const s = clState;
+  const st = $("cl-state");
+  st.textContent = !s ? "Comprobando…" : !s.instalado ? "No instalado" : !s.sesion ? "Sin sesión" : s.activo ? "Activo" : "En pausa";
+  st.className = "state" + (s?.sesion && s.activo ? " on" : s && (!s.instalado || !s.sesion) ? " err" : "");
+  $<HTMLInputElement>("cl-activo").checked = !!s?.activo;
+  $<HTMLSelectElement>("cl-modelo").value = s?.modelo ?? "sonnet";
+  $<HTMLButtonElement>("cl-probar").disabled = !s?.sesion;
+  if (clError) { const m = $("cl-msg"); m.textContent = clError; m.className = "msg err"; }
+  // Preguntas
+  const listo = !!s?.sesion;
+  $<HTMLButtonElement>("ask-go").disabled = !listo;
+  $<HTMLInputElement>("ask-q").disabled = !listo;
+  $("ask-foot").textContent = !TAURI ? "EN MODO DEMO NO SE PREGUNTA A CLAUDE" : listo ? "CLAUDE RESPONDE CON TUS DATOS DE LIFE · NO GUARDA LA PREGUNTA" : "INICIA SESIÓN EN CLAUDE CODE (F5 → CLAUDE) PARA PREGUNTAR";
+  const src = document.getElementById("src-claude");
+  if (src) { src.className = "src" + (s?.sesion && s.activo ? " on" : TAURI && s && !s.sesion ? " err" : ""); src.title = s?.sesion ? "Claude Code con sesión" : "Claude Code sin sesión"; }
+}
+
+async function cargarClaude() {
+  if (!TAURI) { renderClaude(); return; }
+  try { clState = await invoke<ClaudeView>("claude_status"); }
+  catch (err) { clError = String(err); }
+  renderParteControles();
+  renderClaude();
+  brief();
+}
+
+document.querySelectorAll<HTMLButtonElement>("[data-parte]").forEach(b => b.addEventListener("click", () => {
+  parteVista = b.dataset.parte as "diario" | "semanal";
+  renderParteControles();
+  brief();
+}));
+$("parte-regen").addEventListener("click", () => generarParte(parteVista, true));
+
+const clMsg = (t: string, k: "ok" | "err" | "" = "") => { const m = $("cl-msg"); m.textContent = t; m.className = "msg" + (k ? " " + k : ""); };
+async function guardarAjustesClaude() {
+  if (!TAURI) return;
+  try { clState = await invoke<ClaudeView>("claude_ajustes", { activo: $<HTMLInputElement>("cl-activo").checked, modelo: $<HTMLSelectElement>("cl-modelo").value }); clMsg("Guardado.", "ok"); }
+  catch (err) { clMsg(String(err), "err"); }
+  renderParteControles(); renderClaude(); brief();
+}
+$("cl-activo").addEventListener("change", guardarAjustesClaude);
+$("cl-modelo").addEventListener("change", guardarAjustesClaude);
+$("cl-probar").addEventListener("click", async () => {
+  clMsg("Claude está escribiendo el parte…");
+  parteVista = "diario";
+  await generarParte("diario", true);
+  if (!clError) clMsg("Parte escrito: míralo en Hoy.", "ok");
+});
+
+$("ask-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const q = $<HTMLInputElement>("ask-q").value.trim();
+  if (!q || !TAURI) return;
+  const out = $("ask-out"), a = $("ask-a"), btn = $<HTMLButtonElement>("ask-go");
+  out.hidden = false;
+  a.innerHTML = `<span class="wait blink">Pensando con tus datos…</span>`;
+  btn.disabled = true;
+  try {
+    const r = await invoke<string>("preguntar", { pregunta: q, contexto: contexto() });
+    a.innerHTML = esc(r).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  } catch (err) { a.innerHTML = `<span class="alarm">${esc(String(err))}</span>`; }
+  finally { btn.disabled = false; }
+});
 
 /* ---------- dinero ---------- */
 const CATS = ["Ingresos", "Casa y facturas", "Súper", "Restaurantes", "Transporte", "Suscripciones", "Compras", "Equipo",
@@ -1641,7 +1832,7 @@ const msg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gh-ms
 const gmMsg = (text: string, kind: "ok" | "err" | "" = "") => { const m = $("gm-msg"); m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); };
 
 async function load() {
-  if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); return; }
+  if (!TAURI) { radarState = demoRadar(); dibujarRadar(); renderDinero(demoDinero()); renderGmail(demoGmail()); renderInstagram(demoInstagram()); if (YOUTUBE) renderYouTube(demoYouTube()); render(demo()); renderClaude(); return; }
   if (YOUTUBE) {
     try { renderYouTube(await invoke<YtView>("youtube_status")); }
     catch (e) { ytMsg(String(e), "err"); }
@@ -1656,6 +1847,10 @@ async function load() {
   catch (e) { gmMsg(String(e), "err"); }
   try { render(await invoke<Status<GitHub>>("github_status")); }
   catch (e) { msg(String(e), "err"); }
+  datosListos = true;
+  await cargarClaude();
+  programarParte();
+  setInterval(programarParte, 60 * 1000);
 }
 
 $("gm-form").addEventListener("submit", async e => {

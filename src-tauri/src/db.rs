@@ -124,7 +124,44 @@ const MIGRATIONS: &[&str] = &[
         guardado TEXT NOT NULL
     );
     ",
+    // 8 · partes del día y de la semana escritos por Claude
+    "
+    CREATE TABLE partes (
+        fecha    TEXT NOT NULL,         -- AAAA-MM-DD
+        tipo     TEXT NOT NULL,         -- diario | semanal
+        texto    TEXT NOT NULL,
+        generado TEXT NOT NULL,
+        PRIMARY KEY (fecha, tipo)
+    );
+    ",
 ];
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Parte {
+    pub fecha: String,
+    pub tipo: String,
+    pub texto: String,
+    pub generado: String,
+}
+
+pub fn guardar_parte(conn: &Connection, p: &Parte) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO partes (fecha, tipo, texto, generado) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(fecha, tipo) DO UPDATE SET texto = excluded.texto, generado = excluded.generado",
+        params![p.fecha, p.tipo, p.texto, p.generado],
+    )?;
+    Ok(())
+}
+
+/// El último parte de cada tipo.
+pub fn ultimo_parte(conn: &Connection, tipo: &str) -> rusqlite::Result<Option<Parte>> {
+    conn.query_row(
+        "SELECT fecha, tipo, texto, generado FROM partes WHERE tipo = ?1 ORDER BY fecha DESC LIMIT 1",
+        [tipo],
+        |r| Ok(Parte { fecha: r.get(0)?, tipo: r.get(1)?, texto: r.get(2)?, generado: r.get(3)? }),
+    )
+    .optional()
+}
 
 // ── Radar de vida ─────────────────────────────────────────────────────────
 

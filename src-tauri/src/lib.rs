@@ -1,4 +1,5 @@
 mod banco;
+mod claude;
 mod db;
 mod github;
 mod gmail;
@@ -292,6 +293,114 @@ fn avisar_radar(app: &AppHandle) -> Result<(), String> {
         .body("Es domingo: un minuto para puntuar tu semana en LIFE.")
         .show();
     db::set_ajuste(&conn, "aviso_radar", &semana).map_err(|e| e.to_string())
+}
+
+// ── Claude: parte del día, parte semanal y preguntas ──────────────────────
+
+#[derive(Serialize)]
+struct ClaudeView {
+    #[serde(flatten)]
+    estado: claude::Estado,
+    /// Usar Claude para el parte (si no, el parte local de siempre).
+    activo: bool,
+    modelo: String,
+    diario: Option<db::Parte>,
+    semanal: Option<db::Parte>,
+}
+
+/// Carpeta vacía desde la que se llama a Claude Code (sin CLAUDE.md ni ajustes de proyecto).
+fn claude_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("claude"))
+}
+
+fn claude_view(app: &AppHandle, estado: claude::Estado) -> Result<ClaudeView, String> {
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let e = |e: rusqlite::Error| e.to_string();
+    Ok(ClaudeView {
+        estado,
+        activo: db::ajuste(&conn, "claude_activo").map_err(e)?.as_deref() != Some("0"),
+        modelo: db::ajuste(&conn, "claude_modelo").map_err(e)?.unwrap_or_else(|| "sonnet".into()),
+        diario: db::ultimo_parte(&conn, "diario").map_err(e)?,
+        semanal: db::ultimo_parte(&conn, "semanal").map_err(e)?,
+    })
+}
+
+#[tauri::command]
+async fn claude_status(app: AppHandle) -> Result<ClaudeView, String> {
+    let dir = claude_dir(&app)?;
+    std::fs::create_dir_all(&dir).ok();
+    let estado = tauri::async_runtime::spawn_blocking(move || claude::estado(&dir)).await.map_err(|e| e.to_string())?;
+    claude_view(&app, estado)
+}
+
+#[tauri::command]
+async fn claude_ajustes(app: AppHandle, activo: bool, modelo: String) -> Result<ClaudeView, String> {
+    if !matches!(modelo.as_str(), "sonnet" | "haiku" | "opus") {
+        return Err("Modelo no válido.".into());
+    }
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::set_ajuste(&conn, "claude_activo", if activo { "1" } else { "0" }).map_err(|e| e.to_string())?;
+        db::set_ajuste(&conn, "claude_modelo", &modelo).map_err(|e| e.to_string())?;
+    }
+    claude_status(app).await
+}
+
+fn claude_modelo(app: &AppHandle) -> String {
+    let state = app.state::<Db>();
+    let conn = state.0.lock();
+    conn.ok().and_then(|c| db::ajuste(&c, "claude_modelo").ok().flatten()).unwrap_or_else(|| "sonnet".into())
+}
+
+/// Escribe el parte (diario o semanal) con los datos que manda la interfaz y lo guarda.
+#[tauri::command]
+async fn parte_generar(app: AppHandle, tipo: String, contexto: String) -> Result<db::Parte, String> {
+    let sistema = match tipo.as_str() {
+        "diario" => claude::SISTEMA_PARTE,
+        "semanal" => claude::SISTEMA_SEMANA,
+        _ => return Err("Tipo de parte no válido.".into()),
+    };
+    let dir = claude_dir(&app)?;
+    let modelo = claude_modelo(&app);
+    let hoy = chrono::Local::now();
+    let texto = format!("Hoy es {}. Datos de LIFE (JSON):\n{contexto}", hoy.format("%A %d/%m/%Y, %H:%M"));
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar(&dir, &modelo, sistema, &texto, std::time::Duration::from_secs(180))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let parte = db::Parte {
+        fecha: hoy.format("%Y-%m-%d").to_string(),
+        tipo,
+        texto: res,
+        generado: gmail::utc(chrono::Utc::now()),
+    };
+    let state = app.state::<Db>();
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::guardar_parte(&conn, &parte).map_err(|e| e.to_string())?;
+    Ok(parte)
+}
+
+/// Pregunta libre al panel, respondida con los datos que manda la interfaz.
+#[tauri::command]
+async fn preguntar(app: AppHandle, pregunta: String, contexto: String) -> Result<String, String> {
+    let pregunta = pregunta.trim().to_string();
+    if pregunta.is_empty() {
+        return Err("Escribe una pregunta.".into());
+    }
+    let dir = claude_dir(&app)?;
+    let modelo = claude_modelo(&app);
+    let texto = format!(
+        "Hoy es {}.\nPregunta: {pregunta}\n\nDatos de LIFE (JSON):\n{contexto}",
+        chrono::Local::now().format("%A %d/%m/%Y")
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar(&dir, &modelo, claude::SISTEMA_PREGUNTA, &texto, std::time::Duration::from_secs(180))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── YouTube ───────────────────────────────────────────────────────────────
@@ -1261,7 +1370,11 @@ pub fn run() {
             youtube_disconnect,
             youtube_abrir,
             radar_status,
-            radar_guardar
+            radar_guardar,
+            claude_status,
+            claude_ajustes,
+            parte_generar,
+            preguntar
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar LIFE");

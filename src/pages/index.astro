@@ -40,6 +40,7 @@ const tabs = [
           <span class="src" id="src-gmail"><i></i>Gmail</span>
           <span class="src" id="src-revolut"><i></i>Revolut</span>
           <span class="src" id="src-instagram"><i></i>Instagram</span>
+          <span class="src" id="src-claude"><i></i>Claude</span>
           <span class="src" id="src-youtube" data-youtube><i></i>YouTube</span>
         </span>
         <button class="btn" id="privacy" type="button" aria-pressed="false" title="Tecla P">Ocultar cifras</button>
@@ -58,9 +59,12 @@ const tabs = [
         <section class="view" id="v-hoy" role="tabpanel" aria-labelledby="tab-hoy">
           <div class="grid">
             <div class="cell c-7">
-              <div class="cell-h"><h3>Parte del día</h3><span class="jp">本日の報告</span></div>
+              <div class="cell-h"><h3 id="parte-h">Parte del día</h3>
+                <span class="parte-tabs" id="parte-tabs" hidden role="group" aria-label="Parte">
+                  <button type="button" class="btn" data-parte="diario" aria-pressed="true">Día</button><button type="button" class="btn" data-parte="semanal" aria-pressed="false">Semana</button>
+                </span><span class="jp">本日の報告</span></div>
               <div class="frame" data-ch="CH 140.85"><ul class="brief" id="brief"></ul></div>
-              <div class="foot"><span>GENERADO EN LOCAL · CLAUDE EN LA FASE 4</span><span id="brief-time"></span></div>
+              <div class="foot"><span id="parte-origen">GENERADO EN LOCAL</span><span><span id="brief-time"></span> <button class="btn" type="button" id="parte-regen" hidden>Regenerar</button></span></div>
             </div>
             <div class="cell c-5">
               <div class="cell-h"><h3>Radar de vida</h3><span class="jp">生活レーダー</span></div>
@@ -74,6 +78,15 @@ const tabs = [
               </form>
               <svg class="heat-svg" id="radar-hist" viewBox="0 0 300 44" role="img" aria-label="Forma del radar en las últimas semanas"></svg>
               <div class="foot"><span id="radar-foot">SIN SEÑAL</span><button class="btn" type="button" id="radar-edit">Puntuar semana</button></div>
+            </div>
+            <div class="cell c-12" id="ask-cell">
+              <div class="cell-h"><h3>Pregunta a LIFE</h3><span class="jp">質問</span></div>
+              <form class="field ask" id="ask-form" autocomplete="off">
+                <input id="ask-q" type="text" maxlength="400" placeholder="¿Cuánto gasté en restaurantes este año? ¿Qué publicación de Instagram fue mejor este mes?" aria-label="Pregunta a LIFE" spellcheck="true" />
+                <button class="btn solid" type="submit" id="ask-go">Preguntar</button>
+              </form>
+              <div class="frame ask-out" id="ask-out" data-ch="RX" hidden><div id="ask-a"></div></div>
+              <div class="foot"><span id="ask-foot">CLAUDE RESPONDE CON TUS DATOS DE LIFE · NO GUARDA LA PREGUNTA</span></div>
             </div>
             <div class="cell c-12">
               <div class="kpis five">
@@ -261,6 +274,19 @@ const tabs = [
                   <button class="btn" type="button" id="gm-sync" hidden>Sincronizar</button>
                   <button class="btn danger" type="button" id="gm-off" hidden>Desconectar</button>
                 </div>
+              </div>
+              <div class="conn">
+                <div><h4>Claude</h4><div class="state" id="cl-state">Comprobando…</div></div>
+                <div>
+                  <p id="cl-help">El parte del día, el semanal y las preguntas los escribe Claude con <b>tu suscripción</b>, a través de Claude Code (instalado en <span class="copy">%USERPROFILE%\.local\bin</span>). Para iniciar sesión una vez, en PowerShell: <span class="copy">&amp; "$env:USERPROFILE\.local\bin\claude.exe" auth login</span>. A Claude solo le llegan los datos de cada tarea (sin nombres ni correos de clientes, sin tokens).</p>
+                  <div class="field">
+                    <label class="switch" for="cl-activo"><input type="checkbox" id="cl-activo" /> Parte con Claude cada mañana a las 7:30</label>
+                    <select id="cl-modelo" aria-label="Modelo de Claude"><option value="sonnet">Sonnet</option><option value="haiku">Haiku (más rápido)</option><option value="opus">Opus</option></select>
+                    <button class="btn" type="button" id="cl-probar">Escribir el parte ahora</button>
+                  </div>
+                  <div class="msg" id="cl-msg" role="status"></div>
+                </div>
+                <div></div>
               </div>
               <div class="conn">
                 <div><h4>Revolut</h4><div class="state" id="rv-state">Sin extracto</div></div>
