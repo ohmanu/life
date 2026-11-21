@@ -55,8 +55,8 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 - El instalador (`LIFE_<versión>_x64-setup.exe`, NSIS, por usuario, sin permisos de administrador) no va a Git; se regenera con `npm run app:build`.
 - Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` (con sus `-wal`/`-shm`) y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no. Solo se aparta con «file is not a database» (`es_clave_erronea`); si está ocupada por otro proceso, `db::open` espera y reintenta, y si no puede, falla sin tocar el archivo.
 - Las pruebas `#[ignore]` que abren la base real (`diagnostico_real`) no se lanzan con LIFE abierta. Para mirar un archivo sin tocarlo: `LIFE_DB_PRUEBA="ruta" cargo test inspeccionar_copias -- --ignored --nocapture` (trabaja sobre una copia).
-- Registro de la versión instalada: `%LOCALAPPDATA%m.glutamato.lifeogsife.log` (horas en utc; arranque, apertura de la base y lo que devuelve `dinero_status`).
-- depurar la versi�n instalada: arrancarla con `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` y conectarse por CDP a `http://127.0.0.1:9333/json`; cerrarla y abrirla normal al acabar. La CSP de producción (`tauri.conf.json`) se aplica solo en la versión instalada.
+- Registro de la versión instalada: `%LOCALAPPDATA%\com.glutamato.life\logs\LIFE.log` (horas en UTC; arranque, apertura de la base y lo que devuelve `dinero_status`).
+- Depurar la versión instalada: arrancarla con `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` y conectarse por CDP a `http://127.0.0.1:9333/json`; cerrarla y abrirla normal al acabar. La CSP de producción (`tauri.conf.json`) se aplica solo en la versión instalada.
 
 ## Convenciones
 
