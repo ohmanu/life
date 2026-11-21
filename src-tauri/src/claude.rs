@@ -23,6 +23,14 @@ pub fn ejecutable() -> Option<PathBuf> {
 fn comando(exe: &Path, dir: &Path) -> Command {
     let mut c = Command::new(exe);
     c.current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Si LIFE se arrancó desde otra sesión de Claude (por ejemplo, en desarrollo), sus variables
+    // harían que Claude Code no use tu sesión: se quitan para el proceso hijo.
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if k.starts_with("CLAUDE") || k.starts_with("ANTHROPIC") {
+            c.env_remove(k.as_ref());
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -125,3 +133,19 @@ pub const SISTEMA_PREGUNTA: &str = "Eres LIFE, un panel personal. Respondes preg
 vienen en el mensaje (JSON). Español de España, tuteando, directo y breve (como mucho 6 líneas). Haz las cuentas \
 con cuidado y di de qué datos sale la cifra. Si los datos no bastan para responder, dilo y explica qué faltaría. \
 No inventes. Puedes usar **así** para resaltar. No des consejos financieros personalizados.";
+
+#[cfg(test)]
+mod tests {
+    /// Llamada real a Claude Code (usa tu plan): `cargo test parte_real -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn parte_real() {
+        let dir = std::env::temp_dir().join("life-claude-prueba");
+        let datos = r#"{"encargos":{"sin_responder":[{"tipo":"Fotografía","que":"Retrato","horas_esperando":51}],"este_mes":5},
+            "dinero":{"patrimonio":{"total":20259},"por_mes":[{"mes":"2026-10","ingresos":2591,"gastos":1336},{"mes":"2026-11","ingresos":1551,"gastos":1116}]},
+            "instagram":{"seguidores":845,"alcance_30d":76},"github":{"racha_dias":12,"contribuciones_7d":54}}"#;
+        let r = super::preguntar(&dir, "sonnet", super::SISTEMA_PARTE, &format!("Hoy es sábado 21/11/2026. Datos de LIFE (JSON):\n{datos}"), std::time::Duration::from_secs(180));
+        println!("{r:?}");
+        assert!(r.is_ok());
+    }
+}
