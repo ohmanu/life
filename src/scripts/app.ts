@@ -93,21 +93,35 @@ if (TAURI) {
 }
 
 /* ---------- cifras que cuentan ---------- */
-function countUp(root: HTMLElement | null) {
+/** Las cifras cuentan desde cero al cambiar de pestaña (`siempre`) o cuando cambian de valor;
+ *  si una sincronización vuelve a pintar el mismo valor, no se repite la animación. */
+function countUp(root: HTMLElement | null, siempre = false) {
   if (reduce || !root) return;
   root.querySelectorAll<HTMLElement>(".kpi .v").forEach(node => {
-    const original = node.textContent ?? "";
+    // Si hay una animación a medias y nadie ha cambiado la cifra, el valor real es el que guardó.
+    const texto = node.textContent ?? "";
+    const original = node.dataset.anim && texto === node.dataset.frame ? node.dataset.final ?? texto : texto;
+    if (node.dataset.anim) node.textContent = original;
+    if (!siempre && node.dataset.visto === original) return;
+    node.dataset.visto = original;
     const m = original.match(/\d[\d.]*(,\d+)?/);
     if (!m) return;
     const raw = m[0];
     const dec = (raw.split(",")[1] || "").length;
     const target = parseFloat(raw.replace(/\./g, "").replace(",", "."));
+    const token = String(performance.now());
+    node.dataset.anim = token;
+    node.dataset.final = original;
     const t0 = performance.now();
     const step = (now: number) => {
+      if (node.dataset.anim !== token) return; // otra animación la sustituyó
       const p = Math.min(1, (now - t0) / 950);
       const e = 1 - Math.pow(1 - p, 3);
-      node.textContent = p < 1 ? original.replace(raw, fmt(target * e, dec)) : original;
+      const f = p < 1 ? original.replace(raw, fmt(target * e, dec)) : original;
+      node.textContent = f;
+      node.dataset.frame = f;
       if (p < 1) requestAnimationFrame(step);
+      else delete node.dataset.anim;
     };
     requestAnimationFrame(step);
   });
@@ -166,7 +180,7 @@ function select(tab: HTMLButtonElement, silencio = false) {
     t.tabIndex = on ? 0 : -1;
     $(t.getAttribute("aria-controls")!).hidden = !on;
   });
-  countUp($(tab.getAttribute("aria-controls")!));
+  countUp($(tab.getAttribute("aria-controls")!), true);
 }
 tabs.forEach((t, i) => {
   t.addEventListener("click", () => select(t));

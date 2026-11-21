@@ -53,7 +53,9 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 - Sonidos: copia en `src-tauri/sonidos/` (en .gitignore: tienen derechos de autor y el repositorio es público), empaquetada en el instalador como recurso `sonidos/` (uso personal). El comando `sonido` los lee de los recursos, del ajuste `sonidos_dir` o de `core-inspiration/FX`. Pestaña: `0x09`; encargo nuevo: `0x10` (evento `encargo-nuevo`); animaciones de Dinero y Redes: `0x3A` (se apaga a 1,5 s); arranque: `0x7B`. Interruptor en F5 → Sistema. La ventana permite reproducir sin clic (`additionalBrowserArgs` en `tauri.conf.json`).
 
 - El instalador (`LIFE_<versión>_x64-setup.exe`, NSIS, por usuario, sin permisos de administrador) no va a Git; se regenera con `npm run app:build`.
-- Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no.
+- Si se pierde la credencial `db_key`, `life.db` se aparta como `life.db.ilegible-<fecha>` (con sus `-wal`/`-shm`) y se empieza de cero: lo sincronizado se recupera, lo introducido a mano no. Solo se aparta con «file is not a database» (`es_clave_erronea`); si está ocupada por otro proceso, `db::open` espera y reintenta, y si no puede, falla sin tocar el archivo.
+- Las pruebas `#[ignore]` que abren la base real (`diagnostico_real`) no se lanzan con LIFE abierta. Para mirar un archivo sin tocarlo: `LIFE_DB_PRUEBA="ruta" cargo test inspeccionar_copias -- --ignored --nocapture` (trabaja sobre una copia).
+- Depurar la versión instalada: arrancarla con `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` y conectarse por CDP a `http://127.0.0.1:9333/json`; cerrarla y abrirla normal al acabar. La CSP de producción (`tauri.conf.json`) se aplica solo en la versión instalada.
 
 ## Convenciones
 
