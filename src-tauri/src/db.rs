@@ -262,12 +262,26 @@ pub fn open(dir: &Path, key: &str) -> rusqlite::Result<Connection> {
         log::info!("life.db estaba sin cifrar: cifrada");
     }
 
-    let conn = match open_keyed(&path, key) {
+    // Una base bloqueada por otro proceso (otra LIFE, una prueba…) NO es una clave errónea:
+    // se reintenta y, si sigue sin abrirse, se devuelve el error sin tocar el archivo.
+    let mut intento = 0;
+    let abierta = loop {
+        match open_keyed(&path, key) {
+            Err(e) if !es_clave_erronea(&e) && intento < 4 => {
+                intento += 1;
+                log::warn!("life.db ocupada ({e}); reintento {intento}");
+                std::thread::sleep(std::time::Duration::from_millis(750));
+            }
+            r => break r,
+        }
+    };
+    let conn = match abierta {
         Ok(c) => c,
-        Err(e) if path.exists() => {
+        // Solo con «file is not a database» (la clave guardada no es la de este archivo) se aparta.
+        Err(e) if path.exists() && es_clave_erronea(&e) => {
             let aside = dir.join(format!("life.db.ilegible-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
             log::warn!("life.db no se abre con la clave guardada ({e}); se aparta en {}", aside.display());
-            drop_sidecars(&path);
+            mover_sidecars(&path, &aside);
             std::fs::rename(&path, &aside).map_err(io_err)?;
             open_keyed(&path, key)?
         }
@@ -299,6 +313,8 @@ fn set_cipher(conn: &Connection) -> rusqlite::Result<()> {
 
 fn open_keyed(path: &Path, key: &str) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    // Si otro proceso la tiene ocupada, esperar un poco en vez de fallar al momento.
+    conn.busy_timeout(std::time::Duration::from_secs(3))?;
     set_cipher(&conn)?;
     conn.pragma_update(None, "key", key)?;
     // Con una clave errónea, la primera lectura falla con «file is not a database».
@@ -321,9 +337,18 @@ fn encrypt_in_place(path: &Path, key: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn drop_sidecars(path: &Path) {
-    for ext in ["db-wal", "db-shm"] {
-        let _ = std::fs::remove_file(path.with_extension(ext));
+/// ¿Es el error de una clave que no corresponde al archivo (SQLITE_NOTADB)?
+fn es_clave_erronea(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::NotADatabase)
+}
+
+/// Los archivos auxiliares viajan con la base apartada (nunca se borran: pueden tener datos).
+fn mover_sidecars(path: &Path, aside: &Path) {
+    for ext in ["-wal", "-shm"] {
+        let s = std::path::PathBuf::from(format!("{}{ext}", path.display()));
+        if s.exists() {
+            let _ = std::fs::rename(&s, format!("{}{ext}", aside.display()));
+        }
     }
 }
 
@@ -682,6 +707,16 @@ mod tests {
     }
 
     #[test]
+    fn ocupada_no_es_clave_erronea() {
+        let ocupada = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), None);
+        let bloqueada = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_LOCKED), None);
+        let mala = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOTADB), None);
+        assert!(!es_clave_erronea(&ocupada));
+        assert!(!es_clave_erronea(&bloqueada));
+        assert!(es_clave_erronea(&mala));
+    }
+
+    #[test]
     fn sin_clave_no_se_lee() {
         let dir = tempfile::tempdir().unwrap();
         drop(open(dir.path(), &new_key()).unwrap());
@@ -785,5 +820,35 @@ mod diagnostico {
         for r in st.query_map([], |r| Ok(format!("  sub {:<34} n={:<3} {:>7}-{:<7} {}..{} {} «{}»", r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?))).unwrap() { println!("{}", r.unwrap()); }
         let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         println!("version {v}");
+    }
+}
+
+#[cfg(test)]
+mod rescate {
+    /// Abre copias de archivos de base (sin migrar ni apartar nada) y cuenta lo que tienen:
+    /// `LIFE_DB_PRUEBA="ruta1;ruta2" cargo test inspeccionar_copias -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn inspeccionar_copias() {
+        let key = crate::secrets::get("db_key").unwrap().expect("db_key");
+        for ruta in std::env::var("LIFE_DB_PRUEBA").unwrap().split(';') {
+            let tmp = tempfile::tempdir().unwrap();
+            let dst = tmp.path().join("life.db");
+            std::fs::copy(ruta, &dst).unwrap();
+            for ext in ["-wal", "-shm"] {
+                let s = format!("{ruta}{ext}");
+                if std::path::Path::new(&s).exists() { std::fs::copy(&s, tmp.path().join(format!("life.db{ext}"))).unwrap(); }
+            }
+            match super::open_keyed(&dst, &key) {
+                Err(e) => println!("{ruta}: NO SE ABRE ({e})"),
+                Ok(c) => {
+                    let n = |t: &str| c.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get::<_, i64>(0)).map(|x| x.to_string()).unwrap_or_else(|_| "—".into());
+                    let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap_or(-1);
+                    let a = |k: &str| super::ajuste(&c, k).ok().flatten().unwrap_or_else(|| "—".into());
+                    println!("{ruta}: version={v} movs={} ajustes={} radar={} categorias={} partes={} tokens_dia={} cat_ia={} hucha={} oro={} banco_sync={}",
+                        n("transacciones"), n("ajustes"), n("radar"), n("categorias"), n("partes"), n("tokens_dia"), n("categorias_ia"), a("hucha_saldo"), a("oro_onzas"), a("banco_sincronizado"));
+                }
+            }
+        }
     }
 }
