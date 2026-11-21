@@ -25,6 +25,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
 csv = "1"
 jsonwebtoken = "9"
 serde = { version = "1.0", features = ["derive"] }

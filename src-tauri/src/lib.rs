@@ -45,6 +45,18 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Atajo global: si LIFE está delante, a la bandeja; si no, al frente.
+fn alternar_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let delante = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) && w.is_focused().unwrap_or(false);
+        if delante {
+            let _ = w.hide();
+        } else {
+            show_main(app);
+        }
+    }
+}
+
 /// Descarga, guarda y avisa a la interfaz. No retiene la base de datos mientras espera a la red.
 async fn sync_github(app: &AppHandle) -> Result<github::Snapshot, String> {
     let token = secrets::get(github::TOKEN)?.ok_or("GitHub no está conectado.")?;
@@ -1287,7 +1299,7 @@ pub fn run() {
             app.manage(Db(Mutex::new(conn)));
 
             // Bandeja del sistema
-            let open = MenuItemBuilder::with_id("open", "Abrir LIFE").build(app)?;
+            let open = MenuItemBuilder::with_id("open", "Abrir LIFE").accelerator("Ctrl+Alt+L").build(app)?;
             let sync = MenuItemBuilder::with_id("sync", "Sincronizar ahora").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&open, &sync]).separator().item(&quit).build()?;
@@ -1313,6 +1325,24 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Atajo global Ctrl+Alt+L. Si otra app ya lo usa, LIFE arranca igual (solo sin atajo).
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+                let atajo = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyL);
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, sc, ev| {
+                            if sc == &atajo && ev.state() == ShortcutState::Pressed {
+                                alternar_main(app);
+                            }
+                        })
+                        .build(),
+                )?;
+                if let Err(e) = app.global_shortcut().register(atajo) {
+                    log::warn!("atajo Ctrl+Alt+L no disponible: {e}");
+                }
+            }
 
             // Al arrancar con Windows se queda en la bandeja; si no, se muestra.
             if !std::env::args().any(|a| a == "--bandeja") {

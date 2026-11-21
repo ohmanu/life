@@ -22,7 +22,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 - Interfaz: Astro 7 estático + TypeScript estricto + CSS propio. `src/pages/index.astro` (estructura), `src/scripts/app.ts` (lógica, gráficas SVG, llamadas a Rust). Fuera de Tauri se pinta en modo demo con datos de ejemplo.
 - Núcleo: Rust en `src-tauri/`. `lib.rs` (comandos, bandeja, arranque, sincronización periódica), `db.rs` (SQLite `life.db` en `%APPDATA%\com.glutamato.life`, migraciones añadidas al final de `MIGRATIONS`; cifrada en formato SQLCipher 4 con SQLite3 Multiple Ciphers que compila `build.rs`, sin OpenSSL; clave `db_key` en las credenciales de Windows), `github.rs`, `gmail.rs`, `revolut.rs` (CSV), `banco.rs` (Open Banking), `instagram.rs`, `youtube.rs`, `secrets.rs`. Iconos (app y bandeja): el 生 con marco, generados con `scripts/icono.ps1` (instrucciones dentro); bandeja en `src-tauri/icons/tray.png`.
-- Ventana sin marco nativo (`decorations: false`): la barra de título es propia. Cerrar esconde en la bandeja; salir desde el menú de la bandeja. Arranque con Windows opcional (`--bandeja`).
+- Ventana sin marco nativo (`decorations: false`): la barra de título es propia. Cerrar esconde en la bandeja; salir desde el menú de la bandeja. Ctrl+Alt+L (tauri-plugin-global-shortcut) la trae al frente o la esconde. Arranque con Windows opcional (`--bandeja`).
 - Permisos de ventana y plugins en `src-tauri/capabilities/default.json`.
 
 ## Comandos
@@ -35,7 +35,7 @@ Panel de vida personal como app de escritorio para Windows. Propuesta aprobada: 
 
 ## Fases
 
-0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram hecha; YouTube montado pero oculto: `YOUTUBE = false` en `app.ts`) · 4 Parte del día y radar (hecha) · 5 Extras.
+0 Base (hecha) · 1 Encargos (Gmail, hecha) · 2 Dinero (Revolut por CSV y Open Banking hecha; falta conciliar encargo ↔ cobro) · 3 Redes (Instagram hecha; YouTube montado pero oculto: `YOUTUBE = false` en `app.ts`) · 4 Parte del día y radar (hecha) · 5 Extras (atajo global Ctrl+Alt+L hecho; el resto, descartado por ahora).
 
 ## Notas
 
