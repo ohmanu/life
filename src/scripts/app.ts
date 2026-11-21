@@ -245,14 +245,13 @@ function dibujarRadar() {
     const [x, y] = pt(i, 10);
     svgEl("line", { x1: cx, y1: cy, x2: x, y2: y, stroke: K.grid, "stroke-width": .7 }, svg);
     const [lx, ly] = pt(i, 13.4);
-    const t = label(svg, lx, ly + 4, nombre, { "text-anchor": "middle", fill: K.text, "letter-spacing": 1 });
-    const razon = notaRadar(cur).razones[k];
-    if (razon) t.appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: razon }));
+    const t = label(svg, lx, ly + 4, nombre, { "text-anchor": "middle", fill: K.text, "letter-spacing": 1, "data-rotulo": k });
     if (cur) {
       const v = cur.valores[k] ?? 0, p = prev?.valores[k];
       t.textContent = `${nombre} ${v}`;
       if (p !== undefined && v - p <= -2) t.setAttribute("fill", K.alert);
     }
+    t.dataset.color = t.getAttribute("fill") ?? K.text;
   });
   const sw = svgEl("g", { class: "sweep" }, svg);
   const ex = cx - R * Math.sin(Math.PI / 5), ey = cy - R * Math.cos(Math.PI / 5);
@@ -267,6 +266,15 @@ function dibujarRadar() {
     const g = svgEl("g", { class: "radar-shape" }, svg);
     svgEl("polygon", { points: poly(cur), fill: K.ph, "fill-opacity": .22, stroke: K.ph, "stroke-width": 1.6, class: "glow" }, g);
     EJES.forEach(([k], i) => { const [x, y] = pt(i, cur.valores[k] ?? 0); svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.hi }, g); });
+    // Zonas invisibles por eje (encima de todo): al pasar el ratón o llegar con el tabulador, su motivo.
+    EJES.forEach(([k, nombre], i) => {
+      const a0 = -Math.PI / 2 + (i - .5) * 2 * Math.PI / n, a1 = -Math.PI / 2 + (i + .5) * 2 * Math.PI / n, RR = R * 1.55;
+      svgEl("path", {
+        d: `M${cx} ${cy}L${cx + Math.cos(a0) * RR} ${cy + Math.sin(a0) * RR}A${RR} ${RR} 0 0 1 ${cx + Math.cos(a1) * RR} ${cy + Math.sin(a1) * RR}Z`,
+        fill: "transparent", "data-eje": k, tabindex: 0, class: "radar-eje", role: "button",
+        "aria-label": `${nombre.toLowerCase()} ${cur.valores[k] ?? 0}: ${notaRadar(cur).razones[k] ?? "sin motivo guardado"}`,
+      }, svg);
+    });
   }
   svg.setAttribute("aria-label", cur ? `Radar de vida, ${cur.semana}: ` + EJES.map(([k, n]) => `${n.toLowerCase()} ${cur.valores[k]}`).join(", ") : "Radar de vida sin datos todavía");
 
@@ -288,11 +296,36 @@ function dibujarRadar() {
   $("radar-recalc").hidden = !(TAURI && clState?.sesion);
   if (!radarCalculando) {
     const n = notaRadar(cur);
-    $("radar-nota").innerHTML = cur
+    radarNotaBase = cur
       ? `${esc(n.resumen)}${n.resumen ? " " : ""}<span class="muted">· CLAUDE ${stamp(cur.guardado)} · PASA EL RATÓN POR CADA EJE</span>`
       : TAURI && clState?.sesion ? `<span class="muted">CLAUDE PUNTUARÁ LA SEMANA TRAS EL PARTE DE HOY</span>` : `<span class="muted">NECESITA CLAUDE (F5)</span>`;
+    $("radar-nota").innerHTML = radarNotaBase;
   }
   historial();
+}
+
+/** Línea bajo el radar cuando no hay ningún eje señalado (resumen de la semana). */
+let radarNotaBase = "";
+/** Motivo de un eje bajo el radar, con su rótulo iluminado; sin eje, vuelve el resumen. */
+function mostrarEje(k: string | null) {
+  document.querySelectorAll<SVGTextElement>("#radar [data-rotulo]").forEach(t => t.setAttribute("fill", t.dataset.rotulo === k ? K.hi : t.dataset.color ?? K.text));
+  if (!k || radarCalculando) { $("radar-nota").innerHTML = radarNotaBase; return; }
+  const actual = semanaIso().id;
+  const cur = radarState.find(s => s.semana === actual) ?? radarState[radarState.length - 1];
+  if (!cur) return;
+  const prev = semanaPrevia(cur.semana);
+  const nombre = EJES.find(([e]) => e === k)?.[1] ?? k;
+  const v = cur.valores[k] ?? 0, d = prev ? v - (prev.valores[k] ?? 0) : 0;
+  const razon = notaRadar(cur).razones[k];
+  $("radar-nota").innerHTML = `<b class="${d <= -2 ? "alarm" : ""}">${nombre} ${v}${d ? ` ${d > 0 ? "↑" : "↓"}${Math.abs(d)}` : ""}</b> · ${razon ? esc(razon) : `<span class="muted">sin motivo guardado</span>`}`;
+}
+{
+  const svgR = $("radar");
+  const eje = (e: Event) => (e.target as Element).closest?.("[data-eje]")?.getAttribute("data-eje") ?? null;
+  svgR.addEventListener("pointerover", e => mostrarEje(eje(e)));
+  svgR.addEventListener("pointerleave", () => mostrarEje(null));
+  svgR.addEventListener("focusin", e => mostrarEje(eje(e)));
+  svgR.addEventListener("focusout", () => mostrarEje(null));
 }
 
 /** La forma de las últimas 8 semanas, en pequeño. */
@@ -367,6 +400,10 @@ function demoRadar(): Semana[] {
     out.push({ semana: semanaIso(d).id, valores: { trabajo: f(7, 1.3), dinero: f(6, .7), creacion: f(6, 2.1), cuerpo: f(4, 1.7), gente: f(5, .9), descanso: f(i === 1 ? 6 : 5, 2.5) }, nota: "", guardado: d.toISOString() });
   }
   out[out.length - 1].valores.descanso = 3;
+  out[out.length - 1].nota = JSON.stringify({
+    resumen: "Semana de mucho código y encargos, con poco descanso.",
+    razones: { trabajo: "Racha de 12 días y dos encargos en marcha.", dinero: "Ahorras un 28 % este mes.", creacion: "Dos publicaciones con buen alcance.", cuerpo: "Sin señales de deporte.", gente: "Dos cenas fuera.", descanso: "Código también el fin de semana." },
+  });
   return out;
 }
 
@@ -1633,11 +1670,11 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   if (pico.i >= 0 && pico.v > 0) {
     const y = Y(pico.v);
     const x = l + pico.i * gw + gw / 2 + (pico.ing ? -bw / 2 - 1 : bw / 2 + 1);
-    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.hi, "stroke-width": .8, "stroke-dasharray": "4 3", opacity: .7, class: "fade" }, svg);
-    svgEl("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: K.hi, class: "ping" }, svg);
-    svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.hi, class: "fade" }, svg);
+    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.alert, "stroke-width": .8, "stroke-dasharray": "4 3", opacity: .7, class: "fade" }, svg);
+    svgEl("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: K.alert, class: "ping" }, svg);
+    svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.alert, class: "fade" }, svg);
     const ax = Math.min(Math.max(x, l + 60), r - 60);
-    label(svg, ax, y - 6, `MÁX ${eur(pico.v)} · ${pico.ing ? "INGRESOS" : "GASTOS"} ${MESES[mesDe(keys[pico.i]).getMonth()]}`, { "text-anchor": "middle", "font-size": 9, fill: K.hi, class: "fade money" });
+    label(svg, ax, y - 6, `MÁX ${eur(pico.v)} · ${pico.ing ? "INGRESOS" : "GASTOS"} ${MESES[mesDe(keys[pico.i]).getMonth()]}`, { "text-anchor": "middle", "font-size": 9, fill: K.alert, class: "fade money" });
   }
   const pts = accs.map((v, i) => [l + i * gw + gw / 2, YL(v)]);
   svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
@@ -1646,14 +1683,18 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   // Máximo de patrimonio de los 12 meses: punto y cifra sobre la línea.
   const iMax = accs.reduce((m, v, i) => (v > accs[m] ? i : m), 0);
   const esUltimo = iMax === accs.length - 1;
-  label(svg, Math.min(lx, r - 34), ly - 9, `${esUltimo ? "MÁX " : ""}${eur(accs[accs.length - 1])}`, { "text-anchor": "middle", fill: K.hi, class: "fade money" });
+  if (esUltimo) {
+    svgEl("rect", { x: lx - 3.5, y: ly - 3.5, width: 7, height: 7, fill: "none", stroke: K.alert, class: "ping" }, svg);
+    svgEl("rect", { x: lx - 3, y: ly - 3, width: 6, height: 6, fill: K.alert, class: "fade glow" }, svg);
+  }
+  label(svg, Math.min(lx, r - 34), ly - 9, `${esUltimo ? "MÁX " : ""}${eur(accs[accs.length - 1])}`, { "text-anchor": "middle", fill: esUltimo ? K.alert : K.hi, class: "fade money" });
   const [fx, fy] = pts[0];
   if (iMax !== 0) label(svg, fx + 2, fy - 9, eur(accs[0]), { "text-anchor": "start", fill: K.text, "font-size": 9, class: "fade money" });
   if (!esUltimo) {
     const [mx, my] = pts[iMax];
-    svgEl("rect", { x: mx - 3.5, y: my - 3.5, width: 7, height: 7, fill: "none", stroke: K.hi, class: "ping" }, svg);
-    svgEl("rect", { x: mx - 3, y: my - 3, width: 6, height: 6, fill: K.hi, class: "fade glow" }, svg);
-    label(svg, Math.min(Math.max(mx, l + 50), r - 50), my - 10, `MÁX ${eur(accs[iMax])} · ${MESES[mesDe(keys[iMax]).getMonth()]}`, { "text-anchor": "middle", fill: K.hi, "font-size": 9.5, class: "fade money" });
+    svgEl("rect", { x: mx - 3.5, y: my - 3.5, width: 7, height: 7, fill: "none", stroke: K.alert, class: "ping" }, svg);
+    svgEl("rect", { x: mx - 3, y: my - 3, width: 6, height: 6, fill: K.alert, class: "fade glow" }, svg);
+    label(svg, Math.min(Math.max(mx, l + 50), r - 50), my - 10, `MÁX ${eur(accs[iMax])} · ${MESES[mesDe(keys[iMax]).getMonth()]}`, { "text-anchor": "middle", fill: K.alert, "font-size": 9.5, class: "fade money" });
   }
 }
 
