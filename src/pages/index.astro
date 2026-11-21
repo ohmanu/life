@@ -69,15 +69,9 @@ const tabs = [
             <div class="cell c-5">
               <div class="cell-h"><h3>Radar de vida</h3><span class="jp">生活レーダー</span></div>
               <div class="radar" id="radar-vista"><svg id="radar" viewBox="0 0 300 300" role="img" aria-label="Radar de vida"></svg></div>
-              <form class="radar-form" id="radar-form" hidden>
-                <div class="rf-h"><span id="rf-semana"></span><span class="muted">0 = fatal · 10 = genial</span></div>
-                <div id="rf-ejes"></div>
-                <input id="rf-nota" type="text" maxlength="280" placeholder="Una línea sobre la semana (opcional)" aria-label="Nota de la semana" spellcheck="true" />
-                <div class="field"><button class="btn solid" type="submit" id="rf-save">Guardar</button><button class="btn" type="button" id="rf-cancel">Cancelar</button></div>
-                <div class="msg" id="rf-msg" role="status"></div>
-              </form>
+              <div class="radar-nota" id="radar-nota"></div>
               <svg class="heat-svg" id="radar-hist" viewBox="0 0 300 44" role="img" aria-label="Forma del radar en las últimas semanas"></svg>
-              <div class="foot"><span id="radar-foot">SIN SEÑAL</span><button class="btn" type="button" id="radar-edit">Puntuar semana</button></div>
+              <div class="foot"><span id="radar-foot">SIN SEÑAL</span><button class="btn" type="button" id="radar-recalc" hidden>Recalcular</button></div>
             </div>
             <div class="cell c-12" id="ask-cell">
               <div class="cell-h"><h3>Pregunta a LIFE</h3><span class="jp">質問</span></div>
@@ -144,10 +138,9 @@ const tabs = [
                   <span id="m-label">—</span>
                   <button type="button" class="btn" id="m-next" aria-label="Mes siguiente">▸</button>
                 </div>
-                <span class="muted" id="rv-info">SIN EXTRACTO · IMPORTA EL CSV DE REVOLUT</span>
-                <button type="button" class="btn solid" data-import>Importar CSV</button>
+                <span class="muted" id="rv-info">SIN DATOS · CONECTA REVOLUT EN F5</span>
               </div>
-              <div class="msg" data-import-msg role="status"></div>
+              <div class="msg" data-rv-msg role="status"></div>
             </div>
             <div class="cell c-12">
               <div class="kpis">
@@ -289,7 +282,7 @@ const tabs = [
                 <div></div>
               </div>
               <div class="conn">
-                <div><h4>Revolut</h4><div class="state" id="rv-state">Sin extracto</div></div>
+                <div><h4>Revolut</h4><div class="state" id="rv-state">Sin conectar</div></div>
                 <div>
                   <h5 class="conn-sub">Conexión directa · Open Banking <span class="muted" id="rv-bank-state"></span></h5>
                   <div id="rv-bank-help">
@@ -311,13 +304,6 @@ const tabs = [
                     <button class="btn danger" type="button" id="rv-bank-off">Desconectar</button>
                   </div>
                   <div class="msg" id="rv-bank-msg" role="status"></div>
-                  <h5 class="conn-sub">Extracto en CSV</h5>
-                  <p>En la app de Revolut: la cuenta → <b>Extracto</b> → <b>Excel (CSV)</b>, o el <b>Resumen del ejercicio</b>. Sirve para el histórico que el banco no da por Open Banking; lo que llega del banco manda sobre el CSV del mismo periodo.</p>
-                  <div class="field">
-                    <button class="btn" type="button" data-import>Importar CSV</button>
-                    <button class="btn danger" type="button" id="rv-off" hidden>Borrar movimientos</button>
-                  </div>
-                  <div class="msg" data-import-msg role="status"></div>
                 </div>
                 <div></div>
               </div>
@@ -374,6 +360,7 @@ const tabs = [
               <div class="cell-h"><h3>Sistema</h3><span class="jp">システム</span></div>
               <div class="rows">
                 <label class="row switch" for="autostart"><span>Abrir LIFE al iniciar Windows</span><input type="checkbox" id="autostart" /></label>
+                <label class="row switch" for="sonidos"><span>Sonidos</span><input type="checkbox" id="sonidos" /></label>
                 <div class="row"><span>Al cerrar la ventana</span><span>se queda en la bandeja</span></div>
                 <div class="row"><span>Datos</span><span>life.db cifrada en tu equipo</span></div>
                 <div class="row"><span>Avisos</span><span>encargos nuevos · 48 h · banco</span></div>

@@ -113,9 +113,52 @@ function countUp(root: HTMLElement | null) {
   });
 }
 
+/* ---------- sonidos ---------- */
+type Sonido = "pestana" | "encargo" | "graficas" | "inicio";
+const sonidosCache = new Map<Sonido, string>();
+let sonidosOn = (() => { try { return localStorage.getItem("life-sonidos") !== "0"; } catch { return true; } })();
+
+async function urlSonido(n: Sonido): Promise<string | null> {
+  if (!TAURI) return null;
+  const hecho = sonidosCache.get(n);
+  if (hecho) return hecho;
+  try {
+    const buf = await invoke<ArrayBuffer>("sonido", { nombre: n });
+    const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+    sonidosCache.set(n, url);
+    return url;
+  } catch { return null; }
+}
+
+/** Reproduce un efecto. Con `max` (ms), se apaga suave al terminar las animaciones. */
+async function sonar(n: Sonido, max?: number, volumen = .7) {
+  if (!sonidosOn) return;
+  const url = await urlSonido(n);
+  if (!url) return;
+  const a = new Audio(url);
+  a.volume = volumen;
+  a.play().catch(() => {});
+  if (max) {
+    setTimeout(() => {
+      const paso = setInterval(() => {
+        a.volume = Math.max(0, a.volume - .08);
+        if (a.volume <= 0) { a.pause(); clearInterval(paso); }
+      }, 30);
+    }, max);
+  }
+}
+/** Las gráficas de dinero y de redes se animan ~1,6 s: el chaff suena mientras tanto. */
+const sonarGraficas = () => sonar("graficas", 1500, .45);
+
 /* ---------- pestañas ---------- */
 const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]')];
-function select(tab: HTMLButtonElement) {
+function select(tab: HTMLButtonElement, silencio = false) {
+  const vista = tab.getAttribute("aria-controls");
+  const cambia = tab.getAttribute("aria-selected") !== "true";
+  if (!silencio && cambia) {
+    sonar("pestana", undefined, .6);
+    if (vista === "v-dinero" || vista === "v-redes") sonarGraficas();
+  }
   tabs.forEach(t => {
     const on = t === tab;
     t.setAttribute("aria-selected", String(on));
@@ -169,35 +212,6 @@ function semanaIso(d = new Date()) {
 }
 const semanaPrevia = (id: string) => radarState.filter(s => s.semana < id).pop();
 
-/** Sugerencias con datos para algunos ejes (la nota la pones tú). */
-function sugerencias(): Record<string, { valor: number; porque: string }> {
-  const out: Record<string, { valor: number; porque: string }> = {};
-  const clamp = (n: number) => Math.max(0, Math.min(10, Math.round(n)));
-  // Dinero: tasa de ahorro del mes en curso.
-  const meses = rvState.movimientos.length ? porMes(rvState.movimientos) : null;
-  const m = meses?.get(mesKey(new Date()));
-  if (m && m.ing > 0) {
-    const tasa = (m.ing - m.gas) / m.ing * 100;
-    out.dinero = { valor: tasa < 0 ? 2 : tasa < 10 ? 4 : tasa < 20 ? 6 : tasa < 30 ? 8 : 9, porque: `ahorro del mes ${fmt(tasa)} %` };
-  }
-  // Trabajo: contribuciones de GitHub en 7 días y encargos sin responder a tiempo.
-  const gh = ghState.snapshot;
-  if (gh) {
-    const c7 = gh.days.slice(-7).reduce((s, d) => s + d.count, 0);
-    const tarde = gmState.encargos.filter(e => tarde_(e)).length;
-    out.trabajo = { valor: clamp((c7 === 0 ? 3 : c7 < 5 ? 5 : c7 < 15 ? 7 : 8) - (tarde ? 1 : 0)), porque: `${c7} contribuciones en 7 d${tarde ? ` · ${tarde} encargo${tarde === 1 ? "" : "s"} sin responder` : ""}` };
-  }
-  // Creación: publicaciones de Instagram en 7 días.
-  const ig = igState.snapshot;
-  if (ig) {
-    const p7 = ig.posts.filter(p => p.product !== "STORY" && Date.now() - new Date(p.timestamp).getTime() < 7 * DIA).length;
-    out.creacion = { valor: p7 === 0 ? 3 : p7 === 1 ? 6 : p7 === 2 ? 7 : 8, porque: `${p7} publicaci${p7 === 1 ? "ón" : "ones"} en Instagram en 7 d` };
-  }
-  return out;
-}
-// tarde() se define con los encargos; este alias evita depender del orden del archivo.
-const tarde_ = (e: Encargo) => sinResponder(e) && hoursSince(e.recibido) > LIMITE_H;
-
 function dibujarRadar() {
   const svg = $("radar") as unknown as SVGSVGElement;
   svg.replaceChildren();
@@ -217,6 +231,8 @@ function dibujarRadar() {
     svgEl("line", { x1: cx, y1: cy, x2: x, y2: y, stroke: K.grid, "stroke-width": .7 }, svg);
     const [lx, ly] = pt(i, 13.4);
     const t = label(svg, lx, ly + 4, nombre, { "text-anchor": "middle", fill: K.text, "letter-spacing": 1 });
+    const razon = notaRadar(cur).razones[k];
+    if (razon) t.appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: razon }));
     if (cur) {
       const v = cur.valores[k] ?? 0, p = prev?.valores[k];
       t.textContent = `${nombre} ${v}`;
@@ -254,7 +270,13 @@ function dibujarRadar() {
     foot.textContent = txt;
     foot.className = alarma ? "alarm" : "";
   }
-  $("radar-edit").textContent = radarState.some(s => s.semana === actual) ? "Corregir semana" : "Puntuar semana";
+  $("radar-recalc").hidden = !(TAURI && clState?.sesion);
+  if (!radarCalculando) {
+    const n = notaRadar(cur);
+    $("radar-nota").innerHTML = cur
+      ? `${esc(n.resumen)}${n.resumen ? " " : ""}<span class="muted">· CLAUDE ${stamp(cur.guardado)} · PASA EL RATÓN POR CADA EJE</span>`
+      : TAURI && clState?.sesion ? `<span class="muted">CLAUDE PUNTUARÁ LA SEMANA TRAS EL PARTE DE HOY</span>` : `<span class="muted">NECESITA CLAUDE (F5)</span>`;
+  }
   historial();
 }
 
@@ -276,65 +298,44 @@ function historial() {
   });
 }
 
-function abrirRadar() {
-  const sem = semanaIso();
-  const guardada = radarState.find(s => s.semana === sem.id);
-  const base = guardada ?? semanaPrevia(sem.id);
-  const sug = sugerencias();
-  const fmtD = (d: Date) => `${d.getDate()} ${MESES[d.getMonth()].toLowerCase()}`;
-  $("rf-semana").textContent = `Semana ${sem.w} · ${fmtD(sem.lunes)} – ${fmtD(sem.domingo)}`;
-  $("rf-ejes").innerHTML = EJES.map(([k, nombre]) => {
-    const v = guardada?.valores[k] ?? sug[k]?.valor ?? base?.valores[k] ?? 5;
-    const s = sug[k];
-    return `<div class="rf-eje"><label for="rf-${k}">${nombre[0] + nombre.slice(1).toLowerCase()}</label>
-      <input type="range" id="rf-${k}" min="0" max="10" step="1" value="${v}" data-eje="${k}" />
-      <span class="n" id="rf-${k}-n">${v}</span>
-      ${s ? `<span class="dato">dato: <b data-sug="${k}" data-v="${s.valor}">${s.valor}</b> · ${esc(s.porque)}</span>` : ""}</div>`;
-  }).join("");
-  $<HTMLInputElement>("rf-nota").value = guardada?.nota ?? "";
-  $("rf-msg").textContent = "";
-  $("radar-vista").hidden = true;
-  $("radar-form").hidden = false;
+/** Resumen y motivos que guardó Claude en la nota de la semana. */
+function notaRadar(s: Semana | undefined): { resumen: string; razones: Record<string, string> } {
+  if (!s?.nota) return { resumen: "", razones: {} };
+  try {
+    const v = JSON.parse(s.nota);
+    return { resumen: typeof v.resumen === "string" ? v.resumen : "", razones: v.razones && typeof v.razones === "object" ? v.razones : {} };
+  } catch { return { resumen: s.nota, razones: {} }; }
 }
-function cerrarRadar() { $("radar-form").hidden = true; $("radar-vista").hidden = false; }
 
-$("radar-edit").addEventListener("click", () => ($("radar-form").hidden ? abrirRadar() : cerrarRadar()));
-$("rf-cancel").addEventListener("click", cerrarRadar);
-$("rf-ejes").addEventListener("input", e => {
-  const i = e.target as HTMLInputElement;
-  if (i.dataset.eje) $(`rf-${i.dataset.eje}-n`).textContent = i.value;
-});
-$("rf-ejes").addEventListener("click", e => {
-  const b = (e.target as HTMLElement).closest<HTMLElement>("[data-sug]");
-  if (!b) return;
-  const i = $<HTMLInputElement>(`rf-${b.dataset.sug}`);
-  i.value = b.dataset.v!;
-  $(`rf-${b.dataset.sug}-n`).textContent = i.value;
-});
-$("radar-form").addEventListener("submit", async e => {
-  e.preventDefault();
-  const valores: Record<string, number> = {};
-  EJES.forEach(([k]) => (valores[k] = +$<HTMLInputElement>(`rf-${k}`).value));
-  const semana = semanaIso().id, nota = $<HTMLInputElement>("rf-nota").value;
-  if (!TAURI) {
-    radarState = [...radarState.filter(s => s.semana !== semana), { semana, valores, nota, guardado: new Date().toISOString() }].sort((a, b) => a.semana.localeCompare(b.semana));
-    cerrarRadar(); dibujarRadar(); brief(); return;
+/** Datos extra para puntuar la semana: actividad por día y gasto de 7 días por categoría. */
+function contextoRadar() {
+  const base = JSON.parse(contexto());
+  const gh = ghState.snapshot;
+  const dias = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+  const actividad = gh?.days.slice(-14).map(d => ({ fecha: d.date, dia: dias[new Date(d.date + "T00:00:00").getDay()], contribuciones: d.count }));
+  const g7: Record<string, number> = {};
+  for (const m of rvState.movimientos) {
+    if (Date.now() - fechaDe(m.fecha).getTime() > 7 * DIA || !cuenta(m) || m.importe >= 0) continue;
+    const c = catOf(m);
+    g7[c] = r1((g7[c] ?? 0) - m.importe);
   }
-  const btn = $<HTMLButtonElement>("rf-save");
-  btn.disabled = true;
-  try { radarState = await invoke<Semana[]>("radar_guardar", { semana, valores, nota }); cerrarRadar(); dibujarRadar(); brief(); }
-  catch (err) { const m = $("rf-msg"); m.textContent = String(err); m.className = "msg err"; }
-  finally { btn.disabled = false; }
-});
+  return JSON.stringify({ ...base, actividad_github_14d: actividad, gastos_7d_por_categoria: g7 });
+}
+
+let radarCalculando = false;
+async function radarAuto() {
+  if (!TAURI || radarCalculando) return;
+  radarCalculando = true;
+  const b = $<HTMLButtonElement>("radar-recalc");
+  b.disabled = true;
+  $("radar-nota").innerHTML = `<span class="blink">CLAUDE PUNTUANDO LA SEMANA…</span>`;
+  try { radarState = await invoke<Semana[]>("radar_auto", { contexto: contextoRadar() }); }
+  catch (err) { clError = String(err); ultimoFallo = Date.now(); }
+  finally { radarCalculando = false; b.disabled = false; dibujarRadar(); brief(); }
+}
+$("radar-recalc").addEventListener("click", radarAuto);
 
 function briefRadar(lines: string[]) {
-  const sem = semanaIso();
-  const hecha = radarState.some(s => s.semana === sem.id);
-  const dia = new Date().getDay();
-  if (!hecha && (dia === 0 || dia === 6)) {
-    lines.push(`<span class="hot">Fin de semana:</span> un minuto para puntuar tu semana en el <b>radar</b>.`);
-    return;
-  }
   const cur = radarState[radarState.length - 1];
   const prev = cur ? semanaPrevia(cur.semana) : undefined;
   if (!cur || !prev) return;
@@ -1056,7 +1057,11 @@ async function programarParte() {
   if (ahora.getHours() * 60 + ahora.getMinutes() < 7 * 60 + 30) return;
   const hoy = hoyStr();
   if (s.diario?.fecha !== hoy) { await generarParte("diario"); return; }
-  if (ahora.getDay() === 0 && s.semanal?.fecha !== hoy) await generarParte("semanal");
+  if (ahora.getDay() === 0 && s.semanal?.fecha !== hoy) { await generarParte("semanal"); return; }
+  // Radar: Claude puntúa la semana en curso una vez al día, después del parte.
+  const sem = radarState.find(x => x.semana === semanaIso().id);
+  const hoyRadar = sem ? (() => { const g = new Date(sem.guardado); return `${g.getFullYear()}-${pad(g.getMonth() + 1)}-${pad(g.getDate())}`; })() : "";
+  if (hoyRadar !== hoy) await radarAuto();
 }
 
 function renderClaude() {
@@ -1134,7 +1139,7 @@ const REGLAS: [string, RegExp][] = [
   ["Restaurantes", /restaurante|\bbar\b|caf[eé]|cafeter|burger|mcdonald|kfc|telepizza|domino|just ?eat|glovo|deliveroo|uber ?eats|starbucks|tapas|pizzer|cervecer|taberna|bodega|sushi/],
   ["Transporte", /\buber\b|cabify|bolt|renfe|metro|\bemt\b|\btmb\b|taxi|repsol|cepsa|\bbp\b|galp|shell|gasolin|parking|aparcamiento|bicing|free ?now|blablacar|ouigo|iryo|alsa|peaje|autopista/],
   ["Viajes", /ryanair|vueling|iberia|easyjet|booking|airbnb|hotel|expedia|aena|trainline|hostel/],
-  ["Suscripciones", /netflix|spotify|hbo|\bmax\b|disney|prime video|amazon prime|apple\.com|itunes|icloud|google (one|storage|play)|youtube|adobe|github|openai|anthropic|claude|chatgpt|filmin|dazn|notion|figma|dropbox|microsoft|xbox|playstation|patreon|midjourney|canva/],
+  ["Suscripciones", /\byt ?premium|youtube premium|suscripci|cuota mensual|netflix|spotify|hbo|\bmax\b|disney|prime video|amazon prime|apple\.com|itunes|icloud|google (one|storage|play)|youtube|adobe|github|openai|anthropic|claude|chatgpt|filmin|dazn|notion|figma|dropbox|microsoft|xbox|playstation|patreon|midjourney|canva/],
   ["Equipo", /fotocasion|fotoprix|fujifilm|canon|nikon|sony|leica|bhphoto|b&h|adorama|calumet|apple store|pccomponentes|mediamarkt|coolmod/],
   ["Compras", /amazon|aliexpress|zara|h&m|ikea|decathlon|corte ingl|primark|fnac|shein|wallapop|vinted|uniqlo|leroy/],
   ["Salud", /farmacia|cl[ií]nica|dental|dentist|hospital|[oó]ptica|sanitas|adeslas|fisio|gimnasio|\bgym\b|basic-?fit|holmes|anytime/],
@@ -1146,6 +1151,7 @@ const REGLAS: [string, RegExp][] = [
 type Mov = {
   id: string; fecha: string; completada: string | null; tipo: string; producto: string; descripcion: string; comercio: string;
   importe: number; comision: number; divisa: string; estado: string; saldo: number | null; interno: boolean; fuente: string;
+  concepto?: string | null;
 };
 type Banco = {
   configurado: boolean; conectado: boolean; app_id: string | null; valido_hasta: string | null;
@@ -1157,12 +1163,11 @@ type Patrimonio = {
   hucha_tin: number | null;
 };
 const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null, hucha_tin: null };
-type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; importado: string | null; archivo: string | null; banco: Banco; patrimonio: Patrimonio };
+type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; banco: Banco; patrimonio: Patrimonio };
 const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
-type Importe = { nuevos: number; solapados: number; actualizados: number; ignorados: number; leidos: number; vista: Dinero };
 type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
 
-let rvState: Dinero = { movimientos: [], categorias: {}, importado: null, archivo: null, banco: SIN_BANCO, patrimonio: SIN_PATRIMONIO };
+let rvState: Dinero = { movimientos: [], categorias: {}, banco: SIN_BANCO, patrimonio: SIN_PATRIMONIO };
 let mesSel: string | null = null;  // AAAA-MM
 let subsCache: Sub[] = [];
 
@@ -1181,8 +1186,11 @@ function autoCat(m: Mov): string {
   if (m.interno) return "Interno";
   if (m.tipo === "cajero") return "Efectivo";
   if (m.tipo === "comision") return "Comisiones";
+  // El concepto de un Bizum o una transferencia («YT Premium», «cena») manda sobre la persona.
+  const c = (m.concepto ?? "").toLowerCase();
+  if (c && m.importe < 0) for (const [cat, re] of REGLAS) if (re.test(c)) return cat;
   if (m.importe > 0 && m.tipo !== "reembolso") return "Ingresos";
-  const d = m.descripcion.toLowerCase();
+  const d = `${m.descripcion} ${c}`.toLowerCase();
   for (const [cat, re] of REGLAS) if (re.test(d)) return cat;
   if (m.tipo === "transferencia") return "Transferencias";
   return "Otros";
@@ -1359,14 +1367,14 @@ function saldos(list: Mov[], p: Patrimonio) {
 
 function patri(s: ReturnType<typeof saldos>) {
   const el = $("patri");
-  if (!s.hay) { el.innerHTML = `<p class="muted">Sin datos. Importa el resumen del ejercicio o conecta Revolut en F5.</p>`; $("patri-foot").textContent = ""; return; }
+  if (!s.hay) { el.innerHTML = `<p class="muted">Sin datos. Conecta Revolut en F5.</p>`; $("patri-foot").textContent = ""; return; }
   const h = s.hucha, o = s.oroInfo;
   const pct = (a: number, b: number) => `${a >= 0 ? "+" : ""}${fmt(a / b * 100, 1)} %`;
   el.innerHTML = `
     <div><span class="k">Cuenta</span><span class="v money">${eur(s.cuenta, 2)}</span>
-      <span class="d muted">${s.fecha ? `saldo a ${ddmm(fechaDe(s.fecha))} · ${rvState.banco.conectado ? "banco" : "CSV"}` : "sin saldo"}</span></div>
+      <span class="d muted">${s.fecha ? `saldo a ${ddmm(fechaDe(s.fecha))} · ${rvState.banco.conectado ? "banco" : "sin conexión"}` : "sin saldo"}</span></div>
     <div><span class="k">Hucha${h?.estimado ? " ≈" : ""}</span><span class="v money">${h ? eur(h.saldo, 2) : "—"}</span>
-      <span class="d muted">${h ? `${h.base.manual ? "puesto a mano" : "resumen"} el ${ddmm(fechaDe(h.base.fecha))}: <span class="money">${eur(h.base.saldo, 2)}</span>` : "importa el resumen del ejercicio o ajústala a mano"}</span>
+      <span class="d muted">${h ? `${h.base.manual ? "puesto a mano" : "último saldo conocido"} el ${ddmm(fechaDe(h.base.fecha))}: <span class="money">${eur(h.base.saldo, 2)}</span>` : "ajústala a mano"}</span>
       ${h && (h.traspasos || h.intereses > 0) ? `<span class="d muted">${h.traspasos ? `traspasos <span class="money">${h.traspasos > 0 ? "+" : ""}${fmt(h.traspasos, 2)} €</span>` : ""}${h.traspasos && h.intereses > 0 ? " · " : ""}${h.intereses > 0 ? `intereses ≈ <span class="money">+${fmt(h.intereses, 2)} €</span>` : ""}</span>` : ""}
       ${h && h.diario > 0 ? `<span class="d muted">${h.tin !== null ? `${fmt(h.tin, 2)} % TIN` : "ritmo del último mes"} · <span class="money">≈ ${fmt(h.diario, 2)} €</span>/día netos</span>` : ""}</div>
     <div><span class="k">Oro</span><span class="v money">${o ? eur(o.valor, 2) : "—"}</span>
@@ -1384,7 +1392,7 @@ const setM = (key: string, value: string, alarm = false) =>
 function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   const svg = $("flow") as unknown as SVGSVGElement;
   svg.replaceChildren();
-  if (!meses.size) { label(svg, 20, 110, "SIN DATOS · IMPORTA EL CSV DE REVOLUT", { fill: K.grid }); return; }
+  if (!meses.size) { label(svg, 20, 110, "SIN DATOS · CONECTA REVOLUT EN F5", { fill: K.grid }); return; }
   const defs = svgEl("defs", {}, svg);
   const pat = svgEl("pattern", { id: "hatch", width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
   svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 4, stroke: K.text, "stroke-width": 1.2 }, pat);
@@ -1413,6 +1421,21 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
     label(g, x + gw / 2, base + 16, MESES[mesDe(k).getMonth()], { "text-anchor": "middle", "font-size": 9, fill: sel ? K.hi : K.grid });
     const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)} · patrimonio ${eur(serie[i])}`;
   });
+  // Punto álgido: la barra más alta de los 12 meses, con su cantidad.
+  let pico = { v: 0, i: -1, ing: true };
+  data.forEach((d, i) => {
+    if (d.ing > pico.v) pico = { v: d.ing, i, ing: true };
+    if (d.gas > pico.v) pico = { v: d.gas, i, ing: false };
+  });
+  if (pico.i >= 0 && pico.v > 0) {
+    const y = Y(pico.v);
+    const x = l + pico.i * gw + gw / 2 + (pico.ing ? -bw / 2 - 1 : bw / 2 + 1);
+    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.hi, "stroke-width": .8, "stroke-dasharray": "4 3", opacity: .7, class: "fade" }, svg);
+    svgEl("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: K.hi, class: "ping" }, svg);
+    svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.hi, class: "fade" }, svg);
+    const ax = Math.min(Math.max(x, l + 60), r - 60);
+    label(svg, ax, y - 6, `MÁX ${eur(pico.v)} · ${pico.ing ? "INGRESOS" : "GASTOS"} ${MESES[mesDe(keys[pico.i]).getMonth()]}`, { "text-anchor": "middle", "font-size": 9, fill: K.hi, class: "fade money" });
+  }
   const pts = accs.map((v, i) => [l + i * gw + gw / 2, YL(v)]);
   svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
   const [lx, ly] = pts[pts.length - 1];
@@ -1440,11 +1463,11 @@ function movs(list: Mov[]) {
   const el = $("movs");
   const rows = list.filter(m => m.fecha.startsWith(mesSel ?? "-")).reverse();
   $("movs-n").textContent = rows.length ? `${rows.length} MOVIMIENTO${rows.length === 1 ? "" : "S"}` : "";
-  if (!rows.length) { el.innerHTML = `<p class="muted">${list.length ? "Sin movimientos este mes." : "Importa el CSV de Revolut para ver tus movimientos."}</p>`; return; }
+  if (!rows.length) { el.innerHTML = `<p class="muted">${list.length ? "Sin movimientos este mes." : "Conecta Revolut en F5 para ver tus movimientos."}</p>`; return; }
   el.innerHTML = rows.map(m => {
     const c = catOf(m);
     const opts = CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("");
-    const extra = [m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
+    const extra = [m.concepto ? `«${m.concepto}»` : "", m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
     return `<div class="mov${c === "Interno" ? " int" : ""}">
       <span class="muted">${ddmm(fechaDe(m.fecha))}</span>
       <span class="ds" title="${esc(m.descripcion)}">${esc(m.descripcion)}${extra ? `<small>${esc(extra)}</small>` : ""}</span>
@@ -1499,7 +1522,7 @@ function briefDinero(lines: string[]) {
   const suben = subsCache.filter(s => s.sube);
   if (suben.length) lines.push(suben.map(s => `<span class="hot">${esc(s.nombre)} sube ${fmt(s.sube, 2)} €</span>`).join(" · ") + ".");
   const ultimo = list[list.length - 1];
-  if (daysAgo(ultimo.fecha.slice(0, 10)) > 35) lines.push(`<span class="off">El último extracto acaba el ${ddmm(fechaDe(ultimo.fecha))}: importa uno nuevo.</span>`);
+  if (daysAgo(ultimo.fecha.slice(0, 10)) > 35) lines.push(`<span class="off">El último movimiento del banco es del ${ddmm(fechaDe(ultimo.fecha))}: revisa la conexión en F5.</span>`);
 }
 
 function renderDinero(d: Dinero) {
@@ -1561,8 +1584,8 @@ function renderDinero(d: Dinero) {
   const rango = has ? `${ddmm(fechaDe(list[0].fecha))}.${list[0].fecha.slice(2, 4)} → ${ddmm(fechaDe(list[list.length - 1].fecha))}.${list[list.length - 1].fecha.slice(2, 4)}` : "";
   const origen = d.banco?.conectado
     ? `BANCO${d.banco.sincronizado ? ` · LEÍDO ${stamp(d.banco.sincronizado)}` : ""}`
-    : `EXTRACTO${d.importado ? ` ${stamp(d.importado)}` : ""}`;
-  const info = has ? `${origen} · ${fmt(list.length)} MOVIMIENTOS · ${rango}` : "SIN DATOS · CONECTA REVOLUT EN F5 O IMPORTA EL CSV";
+    : "BANCO SIN CONEXIÓN";
+  const info = has ? `${origen} · ${fmt(list.length)} MOVIMIENTOS · ${rango}` : "SIN DATOS · CONECTA REVOLUT EN F5";
   $("rv-info").textContent = info;
   const b = d.banco ?? SIN_BANCO;
   const dias = b.valido_hasta ? Math.floor((new Date(b.valido_hasta).getTime() - Date.now()) / DIA) : null;
@@ -1571,10 +1594,9 @@ function renderDinero(d: Dinero) {
   src.className = "src" + (b.conectado ? (renovar || b.error ? " err" : " on") : has ? " on" : "");
   src.lastChild!.textContent = b.conectado
     ? (renovar ? (dias! < 0 ? "Revolut · permiso caducado" : `Revolut · renovar acceso en ${dias} d`) : b.error ? "Revolut · error" : "Revolut · banco")
-    : has ? `Revolut · CSV ${ddmm(fechaDe(list[list.length - 1].fecha))}` : "Revolut · sin datos";
+    : "Revolut · sin conectar";
   $("rv-state").textContent = b.conectado ? `Conectado · ${b.cuentas} cuenta${b.cuentas === 1 ? "" : "s"}` : has ? `${fmt(list.length)} movimientos` : "Sin conectar";
   $("rv-state").className = "state" + (b.conectado ? (renovar || b.error ? " err" : " on") : has ? " on" : "");
-  $("rv-off").hidden = !has;
   renderBanco(b, dias);
   brief();
 }
@@ -1632,6 +1654,7 @@ $("rv-bank-off").addEventListener("click", () => {
 });
 
 function cambiarMes(delta: number) {
+  sonarGraficas();
   if (!mesSel) return;
   const d = mesDe(mesSel); d.setMonth(d.getMonth() + delta);
   mesSel = mesKey(d);
@@ -1642,11 +1665,11 @@ $("m-prev").addEventListener("click", () => cambiarMes(-1));
 $("m-next").addEventListener("click", () => cambiarMes(1));
 $("flow").addEventListener("click", e => {
   const k = (e.target as Element).closest("[data-mes]")?.getAttribute("data-mes");
-  if (k) { mesSel = k; renderDinero(rvState); }
+  if (k) { sonarGraficas(); mesSel = k; renderDinero(rvState); }
 });
 
 const rvMsg = (text: string, kind: "ok" | "err" | "" = "") =>
-  document.querySelectorAll<HTMLElement>("[data-import-msg]").forEach(m => { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); });
+  document.querySelectorAll<HTMLElement>("[data-rv-msg]").forEach(m => { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); });
 
 $("movs").addEventListener("change", async e => {
   const sel = e.target as HTMLSelectElement;
@@ -1662,38 +1685,6 @@ $("movs").addEventListener("change", async e => {
     renderDinero(d);
     rvMsg(`«${sel.value}» para ${n} movimiento${n === 1 ? "" : "s"} de ${muestra.descripcion}.`, "ok");
   } catch (err) { rvMsg(String(err), "err"); }
-});
-
-document.querySelectorAll<HTMLButtonElement>("[data-import]").forEach(b => b.addEventListener("click", async () => {
-  if (!TAURI) { rvMsg("En modo demo no se importa nada: abre LIFE como app.", "err"); return; }
-  const all = document.querySelectorAll<HTMLButtonElement>("[data-import]");
-  all.forEach(x => (x.disabled = true));
-  rvMsg("Elige el CSV del extracto…");
-  try {
-    const r = await invoke<Importe | null>("dinero_importar");
-    if (!r) { rvMsg(""); return; }
-    mesSel = null;
-    renderDinero(r.vista);
-    rvMsg(`${fmt(r.leidos)} leídos · ${fmt(r.nuevos)} nuevos · ${fmt(r.actualizados)} actualizados${r.solapados ? ` · ${fmt(r.solapados)} ya los da el banco` : ""}${r.ignorados ? ` · ${r.ignorados} revertidos o rechazados, fuera` : ""}${r.vista.patrimonio?.oro_onzas ? ` · oro: ${fmt(r.vista.patrimonio.oro_onzas, 6)} oz` : ""}.`, "ok");
-    countUp($("v-dinero"));
-  } catch (err) { rvMsg(String(err), "err"); }
-  finally { all.forEach(x => (x.disabled = false)); }
-}));
-
-let borrarArmado = 0;
-$("rv-off").addEventListener("click", async () => {
-  const b = $<HTMLButtonElement>("rv-off");
-  if (Date.now() - borrarArmado > 4000) {
-    borrarArmado = Date.now();
-    b.textContent = "¿Seguro? Pulsa otra vez";
-    setTimeout(() => { b.textContent = "Borrar movimientos"; }, 4000);
-    return;
-  }
-  borrarArmado = 0;
-  b.textContent = "Borrar movimientos";
-  if (!TAURI) { renderDinero({ movimientos: [], categorias: rvState.categorias, importado: null, archivo: null, banco: rvState.banco, patrimonio: rvState.patrimonio }); return; }
-  try { renderDinero(await invoke<Dinero>("dinero_borrar")); rvMsg("Movimientos borrados de life.db. Las categorías que elegiste se conservan.", "ok"); }
-  catch (err) { rvMsg(String(err), "err"); }
 });
 
 /* ---------- patrimonio: ajuste a mano ---------- */
@@ -1773,7 +1764,7 @@ function demoDinero(): Dinero {
     add(day(25), "From EUR Current", 200, "transferencia", "ahorro", true);
   }
   movimientos.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  return { movimientos, categorias: { "taberna el sur": "Restaurantes" }, importado: new Date().toISOString(), archivo: null,
+  return { movimientos, categorias: { "taberna el sur": "Restaurantes" },
     banco: { configurado: true, conectado: true, app_id: "demo", valido_hasta: new Date(Date.now() + 172 * DIA).toISOString(), sincronizado: new Date().toISOString(), cuentas: 2, error: null },
     patrimonio: { ...SIN_PATRIMONIO, oro_onzas: 0.124945, oro_coste: 500, oro_valor_resumen: 404.39, oro_fecha: "2026-11-20", oro_precio: 3203.39, oro_precio_fecha: new Date().toISOString(), hucha_tin: 1.15 } };
 }
@@ -1919,6 +1910,7 @@ if (TAURI) {
   listen<GitHub>("github-updated", e => render({ connected: true, snapshot: e.payload }));
   listen<Gmail>("gmail-updated", e => renderGmail(e.payload));
   listen<Dinero>("dinero-updated", e => renderDinero(e.payload));
+  listen<number>("encargo-nuevo", () => sonar("encargo"));
   if (YOUTUBE) listen<YtView>("youtube-updated", e => renderYouTube(e.payload));
   listen<Instagram>("instagram-updated", e => renderInstagram({ connected: true, snapshot: e.payload }));
   // Las esperas («51 h») y el aviso de 48 h avanzan aunque no haya sincronización.
@@ -1928,3 +1920,19 @@ if (TAURI) {
 }
 
 load();
+
+// Sonido de arranque: al abrir LIFE, o la primera vez que se muestra si arrancó en la bandeja.
+if (TAURI) {
+  let arrancado = false;
+  const alArrancar = () => { if (!arrancado && document.visibilityState === "visible") { arrancado = true; sonar("inicio", undefined, .6); } };
+  alArrancar();
+  document.addEventListener("visibilitychange", alArrancar);
+}
+const sonidosBox = $<HTMLInputElement>("sonidos");
+sonidosBox.checked = sonidosOn;
+sonidosBox.disabled = !TAURI;
+sonidosBox.addEventListener("change", () => {
+  sonidosOn = sonidosBox.checked;
+  try { localStorage.setItem("life-sonidos", sonidosOn ? "1" : "0"); } catch { /* sin almacenamiento: dura esta sesión */ }
+  if (sonidosOn) sonar("pestana");
+});

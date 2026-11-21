@@ -4,7 +4,7 @@ mod db;
 mod github;
 mod gmail;
 mod instagram;
-mod revolut;
+mod movimiento;
 mod secrets;
 mod youtube;
 
@@ -247,6 +247,30 @@ fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
     db::delete_snapshot(&conn, "instagram").map_err(|e| e.to_string())
 }
 
+// ── Sonidos ───────────────────────────────────────────────────────────────
+
+/// Efectos de sonido. Viven en una carpeta local (no van a Git ni al instalador): por defecto
+/// `core-inspiration/FX` del proyecto, o la del ajuste `sonidos_dir`.
+const SONIDOS: [(&str, &str); 4] = [
+    ("pestana", "0x09-wapon-select.wav"),
+    ("encargo", "0x10-codec-call.wav"),
+    ("graficas", "0x3A-granade-chaff.wav"),
+    ("inicio", "0x7B-AAhhhh.wav"),
+];
+const SONIDOS_DIR: &str = r"C:\proyects\life\core-inspiration\FX";
+
+#[tauri::command]
+fn sonido(app: AppHandle, nombre: String) -> Result<tauri::ipc::Response, String> {
+    let archivo = SONIDOS.iter().find(|(k, _)| *k == nombre).map(|(_, f)| *f).ok_or("Sonido desconocido.")?;
+    let dir = {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        db::ajuste(&conn, "sonidos_dir").map_err(|e| e.to_string())?.unwrap_or_else(|| SONIDOS_DIR.to_string())
+    };
+    let bytes = std::fs::read(std::path::Path::new(&dir).join(archivo)).map_err(|_| format!("No encuentro {archivo} en {dir}."))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 // ── Radar de vida ─────────────────────────────────────────────────────────
 
 const EJES: [&str; 6] = ["trabajo", "dinero", "creacion", "cuerpo", "gente", "descanso"];
@@ -265,46 +289,31 @@ fn radar_status(app: AppHandle) -> Result<Vec<db::Semana>, String> {
     db::radar(&conn).map_err(|e| e.to_string())
 }
 
-/// Guarda (o corrige) la autoevaluación de una semana: nota de 0 a 10 por eje y una línea.
+/// Claude puntúa la semana con los datos que manda la interfaz y se guarda.
 #[tauri::command]
-fn radar_guardar(app: AppHandle, semana: String, valores: std::collections::HashMap<String, u8>, nota: String) -> Result<Vec<db::Semana>, String> {
-    let bien = semana.len() == 8 && semana.as_bytes()[4] == b'-' && semana.as_bytes()[5] == b'W';
-    if !bien {
-        return Err("Semana no válida.".into());
+async fn radar_auto(app: AppHandle, contexto: String) -> Result<Vec<db::Semana>, String> {
+    let dir = claude_dir(&app)?;
+    let modelo = claude_modelo(&app);
+    let hoy = chrono::Local::now();
+    let semana = semana_iso(hoy.date_naive());
+    let texto = format!("Hoy es {} (semana {semana}). Datos de LIFE (JSON):\n{contexto}", hoy.format("%A %d/%m/%Y"));
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        claude::preguntar(&dir, &modelo, claude::SISTEMA_RADAR, &texto, std::time::Duration::from_secs(180))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let v = claude::json_de(&res).ok_or("Claude no devolvió las notas del radar en el formato esperado.")?;
+    let mut valores = std::collections::HashMap::new();
+    for e in EJES {
+        let n = v[e].as_f64().ok_or_else(|| format!("Falta la nota de {e}."))?;
+        valores.insert(e.to_string(), n.round().clamp(0.0, 10.0) as u8);
     }
-    if valores.len() != EJES.len() || !EJES.iter().all(|e| valores.get(*e).is_some_and(|v| *v <= 10)) {
-        return Err("Puntúa los seis ejes del 0 al 10.".into());
-    }
-    let nota: String = nota.trim().chars().take(280).collect();
+    // La nota guarda el resumen y los motivos de cada eje (JSON) para enseñarlos en Hoy.
+    let nota = serde_json::json!({ "resumen": v["resumen"], "razones": v["razones"], "auto": true }).to_string();
     let state = app.state::<Db>();
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let s = db::Semana { semana, valores, nota, guardado: gmail::utc(chrono::Utc::now()) };
-    db::guardar_semana(&conn, &s).map_err(|e| e.to_string())?;
+    db::guardar_semana(&conn, &db::Semana { semana, valores, nota, guardado: gmail::utc(chrono::Utc::now()) }).map_err(|e| e.to_string())?;
     db::radar(&conn).map_err(|e| e.to_string())
-}
-
-/// Domingo desde las 19:00: si la semana no está puntuada, un aviso de Windows (una vez).
-fn avisar_radar(app: &AppHandle) -> Result<(), String> {
-    use chrono::{Datelike, Timelike};
-    use tauri_plugin_notification::NotificationExt;
-    let ahora = chrono::Local::now();
-    if ahora.weekday() != chrono::Weekday::Sun || ahora.hour() < 19 {
-        return Ok(());
-    }
-    let semana = semana_iso(ahora.date_naive());
-    let state = app.state::<Db>();
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    let hecha = db::radar(&conn).map_err(|e| e.to_string())?.iter().any(|s| s.semana == semana);
-    if hecha || db::ajuste(&conn, "aviso_radar").map_err(|e| e.to_string())?.as_deref() == Some(semana.as_str()) {
-        return Ok(());
-    }
-    let _ = app
-        .notification()
-        .builder()
-        .title("Radar de vida")
-        .body("Es domingo: un minuto para puntuar tu semana en LIFE.")
-        .show();
-    db::set_ajuste(&conn, "aviso_radar", &semana).map_err(|e| e.to_string())
 }
 
 // ── Claude: parte del día, parte semanal y preguntas ──────────────────────
@@ -634,6 +643,10 @@ async fn sync_gmail(app: &AppHandle) -> Result<GmailView, String> {
                 .body(format!("{} · {} · {}", e.tipo, e.que, e.nombre))
                 .show();
         }
+        // La interfaz suena (llamada de códec) si hay encargos nuevos.
+        if !nuevos.is_empty() {
+            let _ = app.emit("encargo-nuevo", nuevos.len());
+        }
     }
 
     let view = gmail_view(app)?;
@@ -761,11 +774,9 @@ fn encargo_abrir(app: AppHandle, id: String) -> Result<(), String> {
 
 #[derive(Serialize)]
 struct DineroView {
-    movimientos: Vec<revolut::Mov>,
+    movimientos: Vec<movimiento::Mov>,
     /// Categorías que elegiste a mano, por comercio.
     categorias: std::collections::HashMap<String, String>,
-    importado: Option<String>,
-    archivo: Option<String>,
     banco: BancoView,
     patrimonio: Patrimonio,
 }
@@ -871,24 +882,11 @@ struct BancoView {
     error: Option<String>,
 }
 
-#[derive(Serialize)]
-struct Importe {
-    nuevos: usize,
-    /// Del CSV, ya cubiertos por el banco: no se guardan.
-    solapados: usize,
-    actualizados: usize,
-    ignorados: usize,
-    leidos: usize,
-    vista: DineroView,
-}
-
 fn dinero_view(conn: &rusqlite::Connection) -> Result<DineroView, String> {
     let e = |e: rusqlite::Error| e.to_string();
     Ok(DineroView {
         movimientos: db::movs(conn).map_err(e)?,
         categorias: db::categorias(conn).map_err(e)?,
-        importado: db::ajuste(conn, "revolut_importado").map_err(e)?,
-        archivo: db::ajuste(conn, "revolut_archivo").map_err(e)?,
         banco: banco_view(conn)?,
         patrimonio: patrimonio(conn),
     })
@@ -1049,11 +1047,11 @@ async fn sync_banco(app: &AppHandle) -> Result<DineroView, String> {
     // Solo las huchas: el nombre de la cuenta en Revolut es el tuyo, y lo que te mandas desde
     // otro banco sí cuenta como dinero que entra.
     let propias = huchas;
-    let resultado: Result<Vec<revolut::Mov>, String> = async {
+    let resultado: Result<Vec<movimiento::Mov>, String> = async {
         let mut movs = Vec::new();
         for c in &cuentas {
             let raw = cliente.movimientos(&c.uid, &desde).await?;
-            let mut ms: Vec<revolut::Mov> = raw.iter().filter_map(|t| banco::a_mov(t, c, &propias)).collect();
+            let mut ms: Vec<movimiento::Mov> = raw.iter().filter_map(|t| banco::a_mov(t, c, &propias)).collect();
             ms.sort_by(|a, b| a.fecha.cmp(&b.fecha));
             // Si el banco no da el saldo tras cada movimiento, el saldo actual va en el último.
             if ms.iter().all(|m| m.saldo.is_none()) {
@@ -1143,67 +1141,6 @@ fn dinero_status(app: AppHandle) -> Result<DineroView, String> {
     dinero_view(&conn)
 }
 
-/// Pide el CSV del extracto de Revolut, lo lee y guarda los movimientos. `None` si cancelas.
-#[tauri::command]
-async fn dinero_importar(app: AppHandle) -> Result<Option<Importe>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let a = app.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        let mut d = a.dialog().file().set_title("Extracto de Revolut (CSV)").add_filter("CSV", &["csv"]);
-        if let Some(w) = a.get_webview_window("main") {
-            d = d.set_parent(&w);
-        }
-        d.blocking_pick_file()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-    let Some(file) = picked else { return Ok(None) };
-    let path = file.into_path().map_err(|e| e.to_string())?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("No se pudo leer el archivo: {e}"))?;
-    let parsed = revolut::parse(&String::from_utf8_lossy(&bytes))?;
-
-    let (nuevos, actualizados, solapados) = {
-    let state = app.state::<Db>();
-    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
-    let now = gmail::utc(chrono::Utc::now());
-    let (nuevos, actualizados) = db::upsert_movs(&mut conn, &parsed.movs, &now).map_err(|e| e.to_string())?;
-    // Si ya hay datos del banco, el CSV no los duplica.
-    let solapados = db::retirar_csv_solapado(&conn).map_err(|e| e.to_string())?;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    db::set_ajuste(&conn, "revolut_importado", &now).map_err(|e| e.to_string())?;
-    db::set_ajuste(&conn, "revolut_archivo", &name).map_err(|e| e.to_string())?;
-    if let Some(h) = parsed.movs.iter().find_map(|m| m.descripcion.strip_prefix("Intereses de ")) {
-        db::set_ajuste(&conn, "hucha_nombre", h).map_err(|e| e.to_string())?;
-    }
-    if let Some(o) = &parsed.oro {
-        let e = |e: rusqlite::Error| e.to_string();
-        db::set_ajuste(&conn, "oro_onzas", &o.onzas.to_string()).map_err(e)?;
-        db::set_ajuste(&conn, "oro_coste", &o.coste.to_string()).map_err(e)?;
-        db::set_ajuste(&conn, "oro_fecha", &o.fecha).map_err(e)?;
-        if let Some(v) = o.valor {
-            db::set_ajuste(&conn, "oro_valor", &v.to_string()).map_err(e)?;
-        }
-    }
-    db::log_sync(&conn, "revolut", true, Some(&format!("{name}: {nuevos} nuevos, {actualizados} actualizados")));
-    (nuevos, actualizados, solapados)
-    };
-    if parsed.oro.is_some() {
-        if let Err(e) = actualizar_oro(&app).await {
-            log::warn!("oro: {e}");
-        }
-    }
-    let state = app.state::<Db>();
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    Ok(Some(Importe {
-        nuevos: nuevos.saturating_sub(solapados),
-        solapados,
-        actualizados,
-        ignorados: parsed.ignorados,
-        leidos: parsed.movs.len(),
-        vista: dinero_view(&conn)?,
-    }))
-}
-
 #[tauri::command]
 fn dinero_categoria(app: AppHandle, comercio: String, categoria: String) -> Result<DineroView, String> {
     let state = app.state::<Db>();
@@ -1212,18 +1149,7 @@ fn dinero_categoria(app: AppHandle, comercio: String, categoria: String) -> Resu
     dinero_view(&conn)
 }
 
-/// Borra los movimientos importados (las categorías elegidas se conservan).
-#[tauri::command]
-fn dinero_borrar(app: AppHandle) -> Result<DineroView, String> {
-    let state = app.state::<Db>();
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::borrar_movs(&conn).map_err(|e| e.to_string())?;
-    let _ = conn.execute("DELETE FROM ajustes WHERE clave IN ('revolut_importado', 'revolut_archivo')", []);
-    dinero_view(&conn)
-}
-
 async fn sync_all(app: &AppHandle, github_too: bool) {
-    let _ = avisar_radar(app);
     // Precio del oro cada hora, solo si tienes oro.
     let tiene_oro = {
         let state = app.state::<Db>();
@@ -1380,9 +1306,7 @@ pub fn run() {
             encargo_estado,
             encargo_abrir,
             dinero_status,
-            dinero_importar,
             dinero_categoria,
-            dinero_borrar,
             banco_configurar,
             banco_conectar,
             banco_sync,
@@ -1399,8 +1323,9 @@ pub fn run() {
             youtube_sync,
             youtube_disconnect,
             youtube_abrir,
+            sonido,
             radar_status,
-            radar_guardar,
+            radar_auto,
             claude_status,
             claude_ajustes,
             parte_generar,

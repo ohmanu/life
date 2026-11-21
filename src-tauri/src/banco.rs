@@ -5,7 +5,7 @@
 //! vinculaste). Su ID y su clave privada viven en el Administrador de credenciales de Windows,
 //! igual que la sesión que da el banco.
 
-use crate::revolut::{comercio, Mov};
+use crate::movimiento::{comercio, Mov};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -228,6 +228,21 @@ fn hash(s: &str) -> String {
     format!("{h:016x}")
 }
 
+fn es_sin_concepto(s: &str) -> bool {
+    let n = s.trim().to_lowercase();
+    n.is_empty() || n == "sin concepto" || n == "no concept" || n == "-"
+}
+
+/// Separa el concepto y la persona de un texto de Bizum de Revolut. `None` si no es un Bizum.
+fn partir_bizum(s: &str) -> Option<(Option<String>, String)> {
+    let low = s.to_lowercase();
+    let i = ["bizum payment to:", "bizum payment from:", "bizum purchase at:"].iter().find_map(|k| low.find(k).map(|i| (i, k.len())))?;
+    let persona = s[i.0 + i.1..].trim().to_string();
+    let texto = s[..i.0].trim();
+    let texto = (!es_sin_concepto(texto)).then(|| texto.to_string());
+    (!persona.is_empty()).then_some((texto, persona))
+}
+
 /// Movimiento del banco → movimiento de LIFE. `None` si está cancelado o rechazado.
 /// `propias` son los nombres de tus huchas: lo que va entre la cuenta y ellas es interno.
 /// (Tu nombre no cuenta: lo que te mandas desde otro banco sí es dinero que entra.)
@@ -281,6 +296,17 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
         (Some(c), true) => c.trim().to_string(),
         _ => descripcion,
     };
+    // Bizum: «Cena viernes Bizum payment to: Ana P.» → persona «Bizum · Ana P.» y concepto «Cena viernes».
+    let (descripcion, concepto) = match concepto.as_deref().and_then(partir_bizum) {
+        Some((texto, persona)) if !interno => {
+            let desc = if otra_parte.is_some() { descripcion } else { format!("Bizum · {persona}") };
+            (desc, texto)
+        }
+        _ => {
+            let c = concepto.filter(|c| c.trim() != descripcion.trim() && !es_sin_concepto(c));
+            (descripcion, c)
+        }
+    };
     Some(Mov {
         id,
         comercio: comercio(&descripcion),
@@ -289,6 +315,7 @@ pub fn a_mov(t: &Value, cuenta: &Cuenta, propias: &[String]) -> Option<Mov> {
         tipo,
         producto,
         descripcion,
+        concepto,
         importe,
         comision: 0.0,
         divisa,
@@ -339,6 +366,34 @@ mod tests {
         let mut c = t.clone();
         c["status"] = json!("CNCL");
         assert!(a_mov(&c, &cuenta(), &[]).is_none());
+    }
+
+    #[test]
+    fn separa_concepto_y_persona_del_bizum() {
+        let t = json!({
+            "status": "BOOK", "booking_date": "2025-09-18",
+            "transaction_amount": {"amount": "11.99", "currency": "EUR"}, "credit_debit_indicator": "DBIT",
+            "remittance_information": ["YT Premium Bizum payment to: Daniel O."]
+        });
+        let m = a_mov(&t, &cuenta(), &[]).unwrap();
+        assert_eq!(m.descripcion, "Bizum · Daniel O.");
+        assert_eq!(m.concepto.as_deref(), Some("YT Premium"));
+        let sin = json!({
+            "status": "BOOK", "booking_date": "2025-09-23",
+            "transaction_amount": {"amount": "300", "currency": "EUR"}, "credit_debit_indicator": "CRDT",
+            "remittance_information": ["Sin concepto Bizum payment from: Raghad D."]
+        });
+        let m = a_mov(&sin, &cuenta(), &[]).unwrap();
+        assert_eq!(m.descripcion, "Bizum · Raghad D.");
+        assert_eq!(m.concepto, None);
+        let tr = json!({
+            "status": "BOOK", "booking_date": "2025-09-23",
+            "transaction_amount": {"amount": "40", "currency": "EUR"}, "credit_debit_indicator": "DBIT",
+            "creditor": {"name": "Ana Pérez"}, "remittance_information": ["Cena cumpleaños"]
+        });
+        let m = a_mov(&tr, &cuenta(), &[]).unwrap();
+        assert_eq!(m.descripcion, "Ana Pérez");
+        assert_eq!(m.concepto.as_deref(), Some("Cena cumpleaños"));
     }
 
     #[test]

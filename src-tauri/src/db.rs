@@ -4,7 +4,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 use crate::gmail::{Encargo, Pendiente};
-use crate::revolut::Mov;
+use crate::movimiento::Mov;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
@@ -133,6 +133,11 @@ const MIGRATIONS: &[&str] = &[
         generado TEXT NOT NULL,
         PRIMARY KEY (fecha, tipo)
     );
+    ",
+    // 9 · concepto de Bizum y transferencias; se vuelve a leer el banco para rellenarlo
+    "
+    ALTER TABLE transacciones ADD COLUMN concepto TEXT;
+    DELETE FROM ajustes WHERE clave IN ('banco_desde', 'revolut_importado', 'revolut_archivo');
     ",
 ];
 
@@ -388,36 +393,36 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
     let tx = conn.transaction()?;
     let (mut nuevos, mut cambiados) = (0, 0);
     {
-        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe, descripcion, interno FROM transacciones WHERE id = ?1")?;
+        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe, descripcion, interno, concepto FROM transacciones WHERE id = ?1")?;
         let mut ins = tx.prepare(
             "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
-                                        comision, divisa, estado, saldo, interno, importado, fuente)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                        comision, divisa, estado, saldo, interno, importado, fuente, concepto)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         )?;
         let mut upd = tx.prepare(
             "UPDATE transacciones SET estado = ?2, completada = ?3, saldo = ?4, comision = ?5, importe = ?6, fecha = ?7,
-                    descripcion = ?8, comercio = ?9, tipo = ?10, interno = ?11
+                    descripcion = ?8, comercio = ?9, tipo = ?10, interno = ?11, concepto = ?12
              WHERE id = ?1",
         )?;
         for m in movs {
-            type Previo = (String, Option<String>, Option<f64>, f64, String, i64);
+            type Previo = (String, Option<String>, Option<f64>, f64, String, i64, Option<String>);
             let old: Option<Previo> = prev
-                .query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+                .query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
                 .optional()?;
             match old {
                 None => {
                     ins.execute(params![m.id, m.fecha, m.completada, m.tipo, m.producto, m.descripcion, m.comercio,
-                                        m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando, m.fuente])?;
+                                        m.importe, m.comision, m.divisa, m.estado, m.saldo, m.interno as i64, cuando, m.fuente, m.concepto])?;
                     nuevos += 1;
                 }
                 // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se
                 // actualizan. Descripción e «interno» también, por si LIFE aprende a leerlos mejor.
-                Some((estado, completada, saldo, importe, descripcion, interno)) => {
+                Some((estado, completada, saldo, importe, descripcion, interno, concepto)) => {
                     if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo)
-                        || (importe - m.importe).abs() > 0.004 || descripcion != m.descripcion || (interno != 0) != m.interno
+                        || (importe - m.importe).abs() > 0.004 || descripcion != m.descripcion || (interno != 0) != m.interno || concepto != m.concepto
                     {
                         upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision, m.importe, m.fecha,
-                                            m.descripcion, m.comercio, m.tipo, m.interno as i64])?;
+                                            m.descripcion, m.comercio, m.tipo, m.interno as i64, m.concepto])?;
                         cambiados += 1;
                     }
                 }
@@ -431,14 +436,14 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
 pub fn movs(conn: &Connection) -> rusqlite::Result<Vec<Mov>> {
     let mut st = conn.prepare(
         "SELECT id, fecha, completada, tipo, producto, descripcion, comercio, importe, comision, divisa,
-                estado, saldo, interno, fuente
+                estado, saldo, interno, fuente, concepto
          FROM transacciones ORDER BY fecha, rowid",
     )?;
     let rows = st.query_map([], |r| {
         Ok(Mov {
             id: r.get(0)?, fecha: r.get(1)?, completada: r.get(2)?, tipo: r.get(3)?, producto: r.get(4)?,
             descripcion: r.get(5)?, comercio: r.get(6)?, importe: r.get(7)?, comision: r.get(8)?,
-            divisa: r.get(9)?, estado: r.get(10)?, saldo: r.get(11)?, interno: r.get::<_, i64>(12)? != 0, fuente: r.get(13)?,
+            divisa: r.get(9)?, estado: r.get(10)?, saldo: r.get(11)?, interno: r.get::<_, i64>(12)? != 0, fuente: r.get(13)?, concepto: r.get(14)?,
         })
     })?;
     rows.collect()
@@ -490,9 +495,6 @@ pub fn nombres_hucha(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     Ok(out)
 }
 
-pub fn borrar_movs(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch("DELETE FROM transacciones;")
-}
 
 pub fn log_sync(conn: &Connection, fuente: &str, ok: bool, detalle: Option<&str>) {
     let now = chrono::Local::now().to_rfc3339();
@@ -528,40 +530,50 @@ mod tests {
         assert_eq!(snapshot(&c, "github").unwrap().as_deref(), Some("{\"a\":1}"));
     }
 
+    fn mov(id: &str, fecha: &str, desc: &str, importe: f64, estado: &str, saldo: Option<f64>, fuente: &str, producto: &str) -> Mov {
+        Mov {
+            id: id.into(), fecha: fecha.into(), completada: None, tipo: "tarjeta".into(), producto: producto.into(),
+            descripcion: desc.into(), concepto: None, comercio: crate::movimiento::comercio(desc), importe, comision: 0.0,
+            divisa: "EUR".into(), estado: estado.into(), saldo, interno: false, fuente: fuente.into(),
+        }
+    }
+
     #[test]
-    fn reimportar_no_duplica_y_completa_pendientes() {
+    fn volver_a_leer_no_duplica_y_completa_pendientes() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = open(dir.path(), &new_key()).unwrap();
-        let h = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\n";
-        let a = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-06 13:30:00,,Cafe,-2.50,0,EUR,PENDING,\nTOPUP,Current,2026-10-01 08:00:00,2026-10-01 08:00:00,Pago,100,0,EUR,COMPLETED,100")).unwrap();
-        assert_eq!(upsert_movs(&mut c, &a.movs, "t1").unwrap(), (2, 0));
-        let b = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-06 13:30:00,2026-10-07 09:00:00,Cafe,-2.50,0,EUR,COMPLETED,97.50")).unwrap();
-        assert_eq!(upsert_movs(&mut c, &b.movs, "t2").unwrap(), (0, 1));
+        let a = [
+            mov("m1", "2026-10-06 13:30:00", "Cafe", -2.5, "pendiente", None, "banco", "cuenta"),
+            mov("m2", "2026-10-01 08:00:00", "Pago", 100.0, "completado", Some(100.0), "banco", "cuenta"),
+        ];
+        assert_eq!(upsert_movs(&mut c, &a, "t1").unwrap(), (2, 0));
+        let mut b = a[0].clone();
+        b.estado = "completado".into();
+        b.saldo = Some(97.5);
+        b.concepto = Some("Desayuno".into());
+        assert_eq!(upsert_movs(&mut c, &[b], "t2").unwrap(), (0, 1));
         let all = movs(&c).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[1].estado, "completado");
         assert_eq!(all[1].saldo, Some(97.5));
+        assert_eq!(all[1].concepto.as_deref(), Some("Desayuno"));
         set_categoria(&c, "cafe", "Restaurantes").unwrap();
         assert_eq!(categorias(&c).unwrap().get("cafe").map(String::as_str), Some("Restaurantes"));
     }
 
     #[test]
-    fn el_banco_manda_sobre_el_csv() {
+    fn el_banco_manda_sobre_lo_importado_antes() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = open(dir.path(), &new_key()).unwrap();
-        let h = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
-";
-        let csv = crate::revolut::parse(&format!("{h}CARD_PAYMENT,Current,2026-10-01 10:00:00,,Viejo,-1,0,EUR,COMPLETED,
-CARD_PAYMENT,Current,2026-11-10 10:00:00,,Nuevo,-2,0,EUR,COMPLETED,")).unwrap();
-        upsert_movs(&mut c, &csv.movs, "t").unwrap();
-        let mut banco = csv.movs[1].clone();
-        banco.id = "b1".into();
-        banco.fuente = "banco".into();
-        banco.fecha = "2026-11-01 00:00:00".into();
-        upsert_movs(&mut c, &[banco], "t").unwrap();
+        let viejos = [
+            mov("c1", "2026-10-01 10:00:00", "Viejo", -1.0, "completado", None, "csv", "cuenta"),
+            mov("c2", "2026-11-10 10:00:00", "Solapado", -2.0, "completado", None, "csv", "cuenta"),
+        ];
+        upsert_movs(&mut c, &viejos, "t").unwrap();
+        upsert_movs(&mut c, &[mov("b1", "2026-11-01 00:00:00", "Nuevo", -2.0, "completado", None, "banco", "cuenta")], "t").unwrap();
         assert_eq!(retirar_csv_solapado(&c).unwrap(), 1);
         let quedan: Vec<_> = movs(&c).unwrap().into_iter().map(|m| m.descripcion).collect();
-        assert_eq!(quedan, vec!["Viejo", "Nuevo"], "el CSV anterior al banco se queda; el solapado se va");
+        assert_eq!(quedan, vec!["Viejo", "Nuevo"]);
     }
 
     #[test]
@@ -587,17 +599,9 @@ CARD_PAYMENT,Current,2026-11-10 10:00:00,,Nuevo,-2,0,EUR,COMPLETED,")).unwrap();
     fn recuerda_el_nombre_de_la_hucha() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = open(dir.path(), &new_key()).unwrap();
-        let resumen = "\"Cuentas corrientes Estado de transacciones\",,,
-\"Cuenta personal (EUR)\",,,
-Fecha,Descripción,Categoría,\"Entradas/salidas de dinero\",Saldo
-\"1 ene 2026\",Mercadona,Comercio,\"-5,00€\",\"10,00€\"
----------,,,
-\"Cuentas de Ahorro Transaction Statements\",,,
-\"Ahorros  (EUR)\",,,
-Fecha,Descripción,TAE,TIN,\"Gross interest\",\"Impuestos retenidos\",\"Other taxes\",Fees,\"Net interest\"
-1/1/26,\"Interés neto pagado a Cuenta con mejora activada del 1 ene 2026\",1%,1%,\"1,35€\",\"0,25€\",\"0,00€\",\"0,00€\",\"1,10€\"";
-        let p = crate::revolut::parse(resumen).unwrap();
-        upsert_movs(&mut c, &p.movs, "t").unwrap();
+        let mut i = mov("i1", "2026-01-02 00:00:00", "Intereses de Cuenta con mejora activada", 2.2, "completado", None, "csv", "ahorro");
+        i.tipo = "intereses".into();
+        upsert_movs(&mut c, &[i], "t").unwrap();
         assert_eq!(nombres_hucha(&c).unwrap(), vec!["Cuenta con mejora activada".to_string()]);
     }
 

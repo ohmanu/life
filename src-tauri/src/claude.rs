@@ -129,6 +129,23 @@ qué cambió en encargos, dinero, redes, código y el radar de vida, comparando 
 Devuelve SOLO entre 5 y 8 líneas, una idea por línea, sin viñetas ni encabezados. Usa **así** para resaltar y \
 empieza con ! lo que se esté descompensando. Usa solo los datos que te dan. No des consejos financieros.";
 
+pub const SISTEMA_RADAR: &str = "Eres el radar de vida de LIFE. Con los datos del usuario (JSON) puntúas su semana \
+del 0 al 10 en seis ejes: trabajo, dinero, creacion, cuerpo, gente, descanso (0 = fatal, 5 = normal, 10 = genial). \
+Trabajo: encargos y su atención, actividad en GitHub. Dinero: ahorro del mes, gasto frente a lo habitual, colchón. \
+Creación: publicaciones e interacción en redes, proyectos de código. Cuerpo, gente y descanso no tienen datos directos: \
+dedúcelos con prudencia de señales indirectas (gastos en salud, deporte, restaurantes, ocio y viajes; actividad en fin de \
+semana o a deshoras; carga de trabajo) y, si no hay señal, deja 5. Responde SOLO con un objeto JSON, sin texto alrededor, \
+con esta forma exacta: {\"trabajo\":7,\"dinero\":6,\"creacion\":5,\"cuerpo\":5,\"gente\":6,\"descanso\":4,\
+\"resumen\":\"una línea sobre la semana\",\"razones\":{\"trabajo\":\"motivo corto\",\"dinero\":\"...\",\"creacion\":\"...\",\
+\"cuerpo\":\"...\",\"gente\":\"...\",\"descanso\":\"...\"}}. Español de España, motivos de menos de 12 palabras.";
+
+/// Saca el objeto JSON de una respuesta (por si Claude añade algo alrededor).
+pub fn json_de(texto: &str) -> Option<Value> {
+    let a = texto.find('{')?;
+    let b = texto.rfind('}')?;
+    serde_json::from_str(texto.get(a..=b)?).ok()
+}
+
 pub const SISTEMA_PREGUNTA: &str = "Eres LIFE, un panel personal. Respondes preguntas con los datos del usuario que \
 vienen en el mensaje (JSON). Español de España, tuteando, directo y breve (como mucho 6 líneas). Haz las cuentas \
 con cuidado y di de qué datos sale la cifra. Si los datos no bastan para responder, dilo y explica qué faltaría. \
@@ -147,5 +164,37 @@ mod tests {
         let r = super::preguntar(&dir, "sonnet", super::SISTEMA_PARTE, &format!("Hoy es sábado 21/11/2026. Datos de LIFE (JSON):\n{datos}"), std::time::Duration::from_secs(180));
         println!("{r:?}");
         assert!(r.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod tests_json {
+    #[test]
+    fn saca_el_json_aunque_haya_texto_alrededor() {
+        let v = super::json_de("Aquí va:\n{\"trabajo\": 7, \"resumen\": \"bien\"}\nFin").unwrap();
+        assert_eq!(v["trabajo"], 7);
+        assert!(super::json_de("sin json").is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests_radar {
+    /// Llamada real (usa tu plan): `cargo test radar_real -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn radar_real() {
+        let dir = std::env::temp_dir().join("life-claude-prueba");
+        let datos = r#"{"encargos":{"sin_responder":[{"tipo":"Fotografía","horas_esperando":51}],"este_mes":5},
+            "dinero":{"por_mes":[{"mes":"2026-11","ingresos":1551,"gastos":1116,"por_categoria":{"Restaurantes":112,"Ocio":47,"Salud":0}}]},
+            "instagram":{"seguidores":845,"publicaciones":[{"fecha":"2026-11-19","alcance":320}]},
+            "github":{"racha_dias":12,"contribuciones_7d":54},
+            "actividad_github_14d":[{"fecha":"2026-11-15","dia":"sáb","contribuciones":9},{"fecha":"2026-11-16","dia":"dom","contribuciones":7}],
+            "gastos_7d_por_categoria":{"Restaurantes":60,"Súper":80}}"#;
+        let r = super::preguntar(&dir, "sonnet", super::SISTEMA_RADAR, &format!("Hoy es sábado 21/11/2026 (semana 2026-W47). Datos de LIFE (JSON):\n{datos}"), std::time::Duration::from_secs(180)).unwrap();
+        println!("{r}");
+        let v = super::json_de(&r).expect("json");
+        for e in ["trabajo", "dinero", "creacion", "cuerpo", "gente", "descanso"] {
+            assert!(v[e].as_f64().is_some_and(|n| (0.0..=10.0).contains(&n)), "{e}");
+        }
     }
 }
