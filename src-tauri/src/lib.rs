@@ -1266,10 +1266,16 @@ async fn sync_all(app: &AppHandle, github_too: bool) {
         let toca = {
             let state = app.state::<Db>();
             let conn = state.0.lock();
-            conn.ok()
-                .and_then(|c| db::ajuste(&c, "banco_sincronizado").ok().flatten())
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::hours(6))
+            conn.ok().is_some_and(|c| {
+                // Sin «leído hasta» (tras una migración que pide releer todo), se lee ya.
+                let sin_desde = db::ajuste(&c, "banco_desde").ok().flatten().is_none();
+                sin_desde
+                    || db::ajuste(&c, "banco_sincronizado")
+                        .ok()
+                        .flatten()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .is_none_or(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::hours(6))
+            })
         };
         if toca {
             if let Err(e) = sync_banco(app).await {

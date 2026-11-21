@@ -159,6 +159,10 @@ const MIGRATIONS: &[&str] = &[
     CREATE TABLE tokens_archivos (ruta TEXT PRIMARY KEY, offset INTEGER NOT NULL);
     CREATE TABLE tokens_vistos (id TEXT PRIMARY KEY);
     ",
+    // 12 · volver a leer el banco entero: las nóminas de Sabadell (tipo «nomina») en todo el histórico
+    "
+    DELETE FROM ajustes WHERE clave = 'banco_desde';
+    ",
 ];
 
 pub fn categorias_ia(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
@@ -430,7 +434,7 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
     let tx = conn.transaction()?;
     let (mut nuevos, mut cambiados) = (0, 0);
     {
-        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe, descripcion, interno, concepto FROM transacciones WHERE id = ?1")?;
+        let mut prev = tx.prepare("SELECT estado, completada, saldo, importe, descripcion, interno, concepto, tipo FROM transacciones WHERE id = ?1")?;
         let mut ins = tx.prepare(
             "INSERT INTO transacciones (id, fecha, completada, tipo, producto, descripcion, comercio, importe,
                                         comision, divisa, estado, saldo, interno, importado, fuente, concepto)
@@ -442,9 +446,9 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
              WHERE id = ?1",
         )?;
         for m in movs {
-            type Previo = (String, Option<String>, Option<f64>, f64, String, i64, Option<String>);
+            type Previo = (String, Option<String>, Option<f64>, f64, String, i64, Option<String>, String);
             let old: Option<Previo> = prev
-                .query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+                .query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
                 .optional()?;
             match old {
                 None => {
@@ -454,9 +458,9 @@ pub fn upsert_movs(conn: &mut Connection, movs: &[Mov], cuando: &str) -> rusqlit
                 }
                 // Los intereses del mes en curso crecen de un resumen a otro: importe y fecha también se
                 // actualizan. Descripción e «interno» también, por si LIFE aprende a leerlos mejor.
-                Some((estado, completada, saldo, importe, descripcion, interno, concepto)) => {
+                Some((estado, completada, saldo, importe, descripcion, interno, concepto, tipo)) => {
                     if estado != m.estado || completada != m.completada || (m.saldo.is_some() && saldo != m.saldo)
-                        || (importe - m.importe).abs() > 0.004 || descripcion != m.descripcion || (interno != 0) != m.interno || concepto != m.concepto
+                        || (importe - m.importe).abs() > 0.004 || descripcion != m.descripcion || (interno != 0) != m.interno || concepto != m.concepto || tipo != m.tipo
                     {
                         upd.execute(params![m.id, m.estado, m.completada, m.saldo.or(saldo), m.comision, m.importe, m.fecha,
                                             m.descripcion, m.comercio, m.tipo, m.interno as i64, m.concepto])?;
@@ -730,6 +734,20 @@ mod diagnostico {
             );
             println!("tipos {:?}", s.posts.iter().map(|p| p.product.as_str()).collect::<std::collections::BTreeSet<_>>());
         }
+        let q = |sql: &str| -> String { c.query_row(sql, [], |r| r.get::<_, Option<String>>(0)).ok().flatten().unwrap_or_else(|| "—".into()) };
+        println!("nominas={} con_concepto={} cat_ia={} banco_sync={} banco_desde={} banco_error={}",
+            q("SELECT CAST(count(*) AS TEXT) FROM transacciones WHERE tipo = 'nomina'"),
+            q("SELECT CAST(count(*) AS TEXT) FROM transacciones WHERE concepto IS NOT NULL"),
+            q("SELECT CAST(count(*) AS TEXT) FROM categorias_ia"),
+            q("SELECT valor FROM ajustes WHERE clave = 'banco_sincronizado'"),
+            q("SELECT valor FROM ajustes WHERE clave = 'banco_desde'"),
+            q("SELECT valor FROM ajustes WHERE clave = 'banco_error'"));
+        let mut st = c.prepare("SELECT fecha, importe, descripcion, coalesce(concepto, ''), tipo FROM transacciones WHERE fuente = 'banco' AND importe > 900 ORDER BY fecha DESC LIMIT 8").unwrap();
+        for r in st.query_map([], |r| Ok(format!("  {} {:>9.2} {} «{}» {}", r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))).unwrap() { println!("{}", r.unwrap()); }
+        let mut st = c.prepare("SELECT categoria, count(*) FROM categorias_ia GROUP BY 1 ORDER BY 2 DESC").unwrap();
+        for r in st.query_map([], |r| Ok(format!("  ia {} {}", r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap() { println!("{}", r.unwrap()); }
+        let mut st = c.prepare("SELECT comercio, count(*), round(min(-importe),2), round(max(-importe),2), min(substr(fecha,1,10)), max(substr(fecha,1,10)), max(descripcion), max(coalesce(concepto,'')) FROM transacciones WHERE importe < 0 AND fecha >= '2025-11-01' AND (lower(descripcion || ' ' || coalesce(concepto,'')) GLOB '*[nN]etflix*' OR lower(descripcion || ' ' || coalesce(concepto,'')) LIKE '%spotify%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%apple%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%google%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%youtube%' OR lower(descripcion || ' ' || coalesce(concepto,'')) LIKE '%yt %' OR lower(descripcion || coalesce(concepto,'')) LIKE '%premium%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%adobe%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%claude%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%anthropic%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%openai%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%disney%' OR lower(descripcion) = 'max' OR lower(descripcion || coalesce(concepto,'')) LIKE '%prime%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%digi%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%gym%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%suscrip%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%hbo%' OR lower(descripcion || coalesce(concepto,'')) LIKE '%github%' OR comercio IN (SELECT comercio FROM categorias_ia WHERE categoria = 'Suscripciones')) GROUP BY comercio ORDER BY 2 DESC").unwrap();
+        for r in st.query_map([], |r| Ok(format!("  sub {:<34} n={:<3} {:>7}-{:<7} {}..{} {} «{}»", r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?))).unwrap() { println!("{}", r.unwrap()); }
         let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         println!("version {v}");
     }

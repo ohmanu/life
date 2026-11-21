@@ -370,3 +370,5 @@ button { font: inherit; }
 .mov.nomina { border-left: 2px solid var(--hi); padding-left: 6px; background: linear-gradient(90deg, var(--hi-tint), transparent 60%); }
 .mov.nomina .ds, .mov.nomina .amt { color: var(--hi); text-shadow: var(--glow-hi); }
 .legend .lg-nom { background: var(--hi); box-shadow: var(--glow-hi); }
+.subs .vieja-h td { color: var(--grid); font-size: 10px; letter-spacing: .12em; padding-top: var(--s3); border-top: 1px solid var(--grid); }
+.subs .vieja td, .subs .vieja td.r { color: var(--grid); }

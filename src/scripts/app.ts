@@ -1270,11 +1270,52 @@ type Patrimonio = {
 const SIN_PATRIMONIO: Patrimonio = { oro_onzas: null, oro_coste: null, oro_valor_resumen: null, oro_fecha: null, oro_precio: null, oro_precio_fecha: null, hucha_saldo: null, hucha_fecha: null, hucha_tin: null };
 type Dinero = { movimientos: Mov[]; categorias: Record<string, string>; categorias_ia?: Record<string, string>; banco: Banco; patrimonio: Patrimonio };
 const SIN_BANCO: Banco = { configurado: false, conectado: false, app_id: null, valido_hasta: null, sincronizado: null, cuentas: 0, error: null };
-type Sub = { comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number; ultimo: Date; proximo: Date; sube: number; desde: string };
+type Sub = {
+  comercio: string; nombre: string; cada: "semanal" | "mensual" | "anual"; dias: number; importe: number; mensual: number;
+  ultimo: Date; proximo: Date; sube: number; desde: string;
+  /** Deducida de la categoría con pocos cobros (no de una repetición ya vista): la cadencia es una suposición. */
+  supuesta?: boolean;
+};
 
 let rvState: Dinero = { movimientos: [], categorias: {}, banco: SIN_BANCO, patrimonio: SIN_PATRIMONIO };
 let mesSel: string | null = null;  // AAAA-MM
 let subsCache: Sub[] = [];
+/** Suscripciones que se cobraban y ya no (sin cobro reciente). */
+let subsViejas: Sub[] = [];
+
+/** Lo que está en la categoría Suscripciones pero aún no se repite lo bastante para detectarlo:
+ *  servicios nuevos (un cobro reciente), anuales (un cobro en el último año) y los que ya no se cobran. */
+function subsPorCategoria(list: Mov[], detectadas: Sub[]) {
+  const por = new Map<string, Mov[]>();
+  for (const m of list) {
+    if (m.divisa !== "EUR" || m.importe >= 0 || m.interno || detectadas.some(s => s.comercio === m.comercio)) continue;
+    if (catOf(m) !== "Suscripciones") continue;
+    (por.get(m.comercio) ?? por.set(m.comercio, []).get(m.comercio)!).push(m);
+  }
+  const activas: Sub[] = [], viejas: Sub[] = [];
+  const hoy = Date.now();
+  for (const [comercio, ms] of por) {
+    ms.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const amts = ms.map(m => -m.importe);
+    const med = mediana(amts.slice(-3));
+    if (amts.slice(-3).some(a => Math.abs(a - med) / med > .3)) continue; // importes que bailan: no es una cuota
+    const t = ms.map(m => fechaDe(m.fecha).getTime());
+    const g = t.length > 1 ? mediana(t.slice(1).map((x, i) => (x - t[i]) / DIA)) : 0;
+    const anual = g >= 300 || (ms.length === 1 && amts[0] >= 30);
+    const cada: Sub["cada"] = anual ? "anual" : g >= 6 && g <= 8 ? "semanal" : "mensual";
+    const dias = cada === "anual" ? 365 : cada === "semanal" ? 7 : 30;
+    const ultimo = new Date(t[t.length - 1]);
+    const importe = amts[amts.length - 1];
+    const s: Sub = {
+      comercio, nombre: ms[ms.length - 1].concepto && /premium|suscrip/i.test(ms[ms.length - 1].concepto!) ? ms[ms.length - 1].concepto! : ms[ms.length - 1].descripcion,
+      cada, dias, importe, mensual: cada === "anual" ? importe / 12 : cada === "semanal" ? importe * 52 / 12 : importe,
+      ultimo, proximo: new Date(ultimo.getTime() + dias * DIA), sube: 0, desde: "", supuesta: true,
+    };
+    const activa = (hoy - ultimo.getTime()) / DIA <= (cada === "anual" ? 380 : cada === "semanal" ? 14 : 45);
+    (activa ? activas : viejas).push(s);
+  }
+  return { activas, viejas };
+}
 
 const eur = (n: number, d = 0) => `${fmt(n, d)} €`;
 const mesKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
@@ -1641,9 +1682,10 @@ function movs(list: Mov[]) {
 function subs(list: Sub[]) {
   const tot = list.reduce((s, x) => s + x.mensual, 0);
   $("subs").innerHTML = list.length
-    ? list.map(s => `<tr><td>${esc(s.nombre)}<span class="note${s.sube ? " up" : ""}">${s.cada}${s.sube ? ` · ▲ sube ${fmt(s.sube, 2)} € en ${s.desde}` : ""}</span></td>
+    ? list.map(s => `<tr><td>${esc(s.nombre)}<span class="note${s.sube ? " up" : ""}">${s.cada}${s.supuesta ? " (supuesto) · desde " + ddmm(s.ultimo) : ""}${s.sube ? ` · ▲ sube ${fmt(s.sube, 2)} € en ${s.desde}` : ""}</span></td>
         <td class="r money">${fmt(s.importe, 2)} €</td></tr>`).join("")
-      + `<tfoot><tr><td>Al mes · al año</td><td class="r money">${eur(tot, 2)} · ${eur(tot * 12)}</td></tr></tfoot>`
+      + (subsViejas.length ? `<tr class="vieja-h"><td colspan="2">SIN COBROS RECIENTES</td></tr>` + subsViejas.map(s => `<tr class="vieja"><td>${esc(s.nombre)}<span class="note">último cobro ${ddmm(s.ultimo)}.${s.ultimo.getFullYear() % 100}</span></td><td class="r money">${fmt(s.importe, 2)} €</td></tr>`).join("") : "")
+      + `<tfoot><tr><td>Al mes · al año (activas)</td><td class="r money">${eur(tot, 2)} · ${eur(tot * 12)}</td></tr></tfoot>`
     : `<tr><td class="muted">${rvState.movimientos.length ? "No se ve ningún cargo que se repita." : "Sin datos."}</td></tr>`;
   const hoy = Date.now();
   const prox = list.filter(s => s.proximo.getTime() - hoy <= 30 * DIA).sort((a, b) => a.proximo.getTime() - b.proximo.getTime());
@@ -1691,6 +1733,9 @@ function renderDinero(d: Dinero) {
   const list = d.movimientos;
   subsCache = [];
   subsCache = detectarSubs(list);
+  const extra = subsPorCategoria(list, subsCache);
+  subsCache = [...subsCache, ...extra.activas].sort((a, b) => b.mensual - a.mensual);
+  subsViejas = extra.viejas.sort((a, b) => b.ultimo.getTime() - a.ultimo.getTime());
   const meses = porMes(list);
   const now = mesKey(new Date());
   const conDatos = [...meses.keys()].sort();
