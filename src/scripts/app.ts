@@ -1670,7 +1670,7 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
   if (pico.i >= 0 && pico.v > 0) {
     const y = Y(pico.v);
     const x = l + pico.i * gw + gw / 2 + (pico.ing ? -bw / 2 - 1 : bw / 2 + 1);
-    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.alert, "stroke-width": .8, "stroke-dasharray": "4 3", opacity: .7, class: "fade" }, svg);
+    svgEl("line", { x1: l, y1: y, x2: r, y2: y, stroke: K.hi, "stroke-width": .8, "stroke-dasharray": "4 3", opacity: .7, class: "fade" }, svg);
     svgEl("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: K.alert, class: "ping" }, svg);
     svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.alert, class: "fade" }, svg);
     const ax = Math.min(Math.max(x, l + 60), r - 60);
