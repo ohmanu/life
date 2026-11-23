@@ -198,6 +198,7 @@ function togglePrivacy() {
   $("app").classList.toggle("private", on);
   pb.setAttribute("aria-pressed", String(on));
   pb.textContent = on ? "Mostrar cifras" : "Ocultar cifras";
+  heatGastos();
 }
 pb.addEventListener("click", togglePrivacy);
 document.addEventListener("keydown", e => {
@@ -412,11 +413,12 @@ function setText(key: string, value: string) {
   document.querySelectorAll<HTMLElement>(`[data-k="${key}"]`).forEach(n => (n.textContent = value));
 }
 
-function heat(days: Day[]) {
-  const svg = $("heat") as unknown as SVGSVGElement;
+/** Cuadrícula de un año por días (como la de GitHub). `tip` da el texto de cada cuadro. */
+function heat(days: Day[], id = "heat", vacio = "SIN DATOS · CONECTA GITHUB EN F5", tip: (d: Day) => string = d => `${d.date} · ${d.count}`) {
+  const svg = $(id) as unknown as SVGSVGElement;
   svg.replaceChildren();
   const s = 12, g = 2, x0 = 30, y0 = 18, op = [0, .25, .5, .75, 1];
-  if (!days.length) { label(svg, x0, 60, "SIN DATOS · CONECTA GITHUB EN F5", { fill: K.grid }); return; }
+  if (!days.length) { label(svg, x0, 60, vacio, { fill: K.grid }); return; }
   const first = new Date(days[0].date + "T00:00:00");
   const offset = first.getDay();
   let lastMonth = -1;
@@ -431,10 +433,70 @@ function heat(days: Day[]) {
     svgEl("rect", {
       x: x0 + w * (s + g), y: y0 + wd * (s + g), width: s, height: s,
       fill: d.level ? K.ph : K.bg2, "fill-opacity": d.level ? op[d.level] : 1, class: "pop", style: `--i:${w}`,
-    }, svg).appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${d.date} · ${d.count}` }));
+    }, svg).appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: tip(d) }));
   });
   const n = days.length - 1 + offset;
   svgEl("rect", { x: x0 + Math.floor(n / 7) * (s + g) - 1.5, y: y0 + (n % 7) * (s + g) - 1.5, width: s + 3, height: s + 3, fill: "none", stroke: K.hi, "stroke-width": 1.5, class: "blink" }, svg);
+}
+
+/** Los últimos 365 días (fecha local AAAA-MM-DD), del más antiguo a hoy. */
+function ultimoAno() {
+  const hoy = new Date();
+  return Array.from({ length: 365 }, (_, i) => {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 364 + i);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  });
+}
+/** Nivel 1–4 por cuartiles de los días con actividad (0 = nada). */
+function niveles(valores: number[]) {
+  const nz = valores.filter(v => v > 0).sort((a, b) => a - b);
+  const q = (p: number) => nz[Math.min(nz.length - 1, Math.floor(p * nz.length))];
+  const [q1, q2, q3] = nz.length ? [q(.25), q(.5), q(.75)] : [0, 0, 0];
+  return valores.map(v => (v <= 0 ? 0 : v <= q1 ? 1 : v <= q2 ? 2 : v <= q3 ? 3 : 4));
+}
+const fechaLarga = (f: string) => new Date(f + "T00:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+/** Gastos por día del último año: color por total gastado, con número de gastos y total. */
+function heatGastos() {
+  const list = rvState.movimientos;
+  const foot = $("heat-gas-foot");
+  if (!list.length) { heat([], "heat-gas", "SIN DATOS · CONECTA REVOLUT EN F5"); foot.textContent = ""; return; }
+  const dias = ultimoAno();
+  const por = new Map<string, { n: number; total: number }>();
+  for (const m of list) {
+    if (m.importe >= 0 || !cuenta(m) || esIngreso(catOf(m))) continue;
+    const f = m.fecha.slice(0, 10);
+    const x = por.get(f) ?? por.set(f, { n: 0, total: 0 }).get(f)!;
+    x.n++; x.total += -m.importe + m.comision;
+  }
+  const tot = dias.map(f => por.get(f)?.total ?? 0);
+  const lv = niveles(tot);
+  const ver = $("app").classList.contains("private");
+  heat(dias.map((f, i) => ({ date: f, count: por.get(f)?.n ?? 0, level: lv[i] })), "heat-gas", "", d => {
+    const x = por.get(d.date);
+    return x ? `${fechaLarga(d.date)} · ${x.n} gasto${x.n === 1 ? "" : "s"} · ${ver ? "•••" : eur(x.total, 2)}` : `${fechaLarga(d.date)} · sin gastos`;
+  });
+  const conGasto = dias.filter(f => por.has(f)).length;
+  foot.textContent = `${conGasto} DÍAS CON GASTOS DE 365`;
+}
+
+/** Publicaciones e historias de Instagram por día del último año. */
+function heatPublicaciones() {
+  const ig = igState.snapshot;
+  const foot = $("heat-ig-foot");
+  if (!ig) { heat([], "heat-ig", igState.connected ? "SINCRONIZANDO…" : "SIN DATOS · CONECTA INSTAGRAM EN F5"); foot.textContent = ""; return; }
+  const por = new Map((ig.actividad ?? []).map(d => [d.fecha, d]));
+  const dias = ultimoAno();
+  const n = dias.map(f => { const x = por.get(f); return x ? x.posts + x.historias : 0; });
+  const lv = niveles(n);
+  heat(dias.map((f, i) => ({ date: f, count: n[i], level: lv[i] })), "heat-ig", "", d => {
+    const x = por.get(d.date);
+    if (!x || !d.count) return `${fechaLarga(d.date)} · nada publicado`;
+    return `${fechaLarga(d.date)} · ${[x.posts ? `${x.posts} publicaci${x.posts === 1 ? "ón" : "ones"}` : "", x.historias ? `${x.historias} historia${x.historias === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}`;
+  });
+  const posts = dias.reduce((s, f) => s + (por.get(f)?.posts ?? 0), 0);
+  const hist = dias.reduce((s, f) => s + (por.get(f)?.historias ?? 0), 0);
+  foot.textContent = `${posts} PUBLICACIONES · ${hist} HISTORIAS EN 365 DÍAS`;
 }
 
 let ghState: Status<GitHub> = { connected: false, snapshot: null };
@@ -586,7 +648,7 @@ function ficha(e: Encargo | undefined) {
     <div class="estados" role="group" aria-label="Estado del encargo">
       ${ESTADOS.map(s => `<button type="button" class="btn" data-estado="${s}" aria-pressed="${s === e.estado}">${NOMBRE_ESTADO[s]}</button>`).join("")}
     </div>
-    <div class="estados"><button type="button" class="btn" id="enc-open">Abrir en Gmail</button><span class="msg" id="enc-msg"></span></div>`;
+    <div class="estados"><button type="button" class="btn" id="enc-open">Abrir en Gmail</button><button type="button" class="btn danger" id="enc-del">Borrar</button><span class="msg" id="enc-msg"></span></div>`;
 }
 
 function chart(list: Encargo[]) {
@@ -671,6 +733,21 @@ $("ficha").addEventListener("click", async e => {
     catch (err) { encMsg(String(err), "err"); }
     return;
   }
+  if (t.id === "enc-del") {
+    // Dos pasos: el primer clic pide confirmar.
+    if (t.dataset.confirmar !== "1") {
+      t.dataset.confirmar = "1";
+      t.textContent = "Sí, borrar para siempre";
+      encMsg("Se borra de LIFE (en Gmail no se toca nada) y no se vuelve a leer.", "err");
+      setTimeout(() => { if (t.isConnected) { delete t.dataset.confirmar; t.textContent = "Borrar"; encMsg(""); } }, 6000);
+      return;
+    }
+    selected = null;
+    if (!TAURI) { renderGmail({ ...gmState, encargos: gmState.encargos.filter(x => x.id !== id) }); return; }
+    try { renderGmail(await invoke<Gmail>("encargo_borrar", { id })); }
+    catch (err) { selected = id; encMsg(String(err), "err"); }
+    return;
+  }
   if (t.id === "enc-open") {
     if (!TAURI) { encMsg("En modo demo no se abre Gmail.", "err"); return; }
     try { await invoke("encargo_abrir", { id }); }
@@ -687,7 +764,7 @@ type IgDia = { fecha: string; valor: number };
 type Instagram = {
   username: string; name: string | null; followers: number; follows: number; media_count: number; posts: IgPost[];
   reach: IgDia[]; reach_30: number | null; views_30: number | null; engaged_30: number | null; interactions_30: number | null;
-  online: number[]; historia: IgDia[]; synced_at: string;
+  online: number[]; historia: IgDia[]; actividad?: { fecha: string; posts: number; historias: number }[]; synced_at: string;
 };
 let igState: Status<Instagram> = { connected: false, snapshot: null };
 
@@ -789,6 +866,7 @@ function renderInstagram(st: Status<Instagram>) {
   igChart(ig);
   igHoras(ig);
   igPosts(ig);
+  heatPublicaciones();
   $("ig-sync").textContent = ig ? `SINCRONIZADO ${stamp(ig.synced_at)}` : st.connected ? "SINCRONIZANDO…" : "SIN CONECTAR";
 
   const src = $("src-instagram");
@@ -851,11 +929,13 @@ function demoInstagram(): Status<Instagram> {
     views: Math.round(500 + rnd() * 4000), saved: Math.round(rnd() * 30), shares: Math.round(rnd() * 15),
   }));
   const online = Array.from({ length: 24 }, (_, h) => Math.round(30 + 200 * Math.exp(-((h - 21) ** 2) / 12) + 60 * Math.exp(-((h - 14) ** 2) / 8)));
+  const actividad = Array.from({ length: 365 }, (_, i) => ({ fecha: dia(364 - i), posts: rnd() < .1 ? 1 + Math.floor(rnd() * 2) : 0, historias: i > 300 && rnd() < .35 ? 1 + Math.floor(rnd() * 5) : 0 }))
+    .filter(d => d.posts || d.historias);
   return {
     connected: true,
     snapshot: {
       username: "ejemplo", name: "Ejemplo", followers: 1222, follows: 310, media_count: 214, posts, reach,
-      reach_30: 9840, views_30: 31200, engaged_30: 612, interactions_30: 1890, online, historia, synced_at: new Date().toISOString(),
+      reach_30: 9840, views_30: 31200, engaged_30: 612, interactions_30: 1890, online, historia, actividad, synced_at: new Date().toISOString(),
     },
   };
 }
@@ -1027,12 +1107,32 @@ function contexto() {
       .filter(m => m.fecha.startsWith(mes) && cuenta(m) && !esIngreso(catOf(m)) && m.importe < 0)
       .sort((a, b) => a.importe - b.importe).slice(0, 15)
       .map(m => ({ fecha: m.fecha.slice(0, 10), comercio: m.descripcion, importe: r1(-m.importe), categoria: catOf(m) }));
+    // Comercios del último año con la categoría que usa LIFE (la tuya si la elegiste a mano).
+    const desde = Date.now() - 365 * DIA;
+    const porComercio = new Map<string, { comercio: string; categoria: string; veces: number; total: number; ultimo: string }>();
+    for (const m of rvState.movimientos) {
+      if (!cuenta(m) || fechaDe(m.fecha).getTime() < desde) continue;
+      const c = porComercio.get(m.comercio) ?? porComercio.set(m.comercio, { comercio: m.descripcion, categoria: catOf(m), veces: 0, total: 0, ultimo: "" }).get(m.comercio)!;
+      c.veces++; c.total += m.importe; c.ultimo = m.fecha.slice(0, 10);
+    }
+    const comercios = [...porComercio.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total)).slice(0, 150)
+      .map(c => ({ ...c, total: r1(c.total) }));
+    const manual = Object.entries(rvState.categorias).map(([k, categoria]) => ({
+      comercio: rvState.movimientos.find(m => m.comercio === k)?.descripcion ?? k, categoria,
+    }));
     dinero = {
       moneda: "EUR",
+      nota_categorias: "La categoría de cada movimiento es la que usa LIFE: la que el usuario eligió a mano manda; si no, reglas automáticas. Usa estas categorías (por ejemplo, «Suscripciones») tal cual.",
+      categorias_elegidas_a_mano: manual,
+      comercios_ultimo_ano: comercios,
+      suscripciones_cobradas_por_mes: keys.map(k => {
+        const ms = subsDelMes(rvState.movimientos, k);
+        return { mes: k, total: r1(ms.reduce((s, m) => s - m.importe, 0)), cargos: ms.map(m => ({ fecha: m.fecha.slice(0, 10), nombre: nombreSub(m), importe: r1(-m.importe) })) };
+      }),
       patrimonio: { total: r1(s.total), cuenta: r1(s.cuenta), hucha_estimada: r1(s.ahorro), oro: r1(s.oro) },
       por_mes: keys.map(k => { const m = meses.get(k)!; return { mes: k, ingresos: r1(m.ing), gastos: r1(m.gas), por_categoria: Object.fromEntries([...m.cats].map(([c, v]) => [c, r1(v)])) }; }),
       gastos_mayores_este_mes: gastosMes,
-      suscripciones: subsCache.map(x => ({ nombre: x.nombre, cada: x.cada, importe: r1(x.importe), proximo_cobro: `${x.proximo.getFullYear()}-${pad(x.proximo.getMonth() + 1)}-${pad(x.proximo.getDate())}`, subida: x.sube ? r1(x.sube) : undefined })),
+      suscripciones_activas: subsCache.map(x => ({ nombre: x.nombre, cada: x.cada, importe: r1(x.importe), proximo_cobro: `${x.proximo.getFullYear()}-${pad(x.proximo.getMonth() + 1)}-${pad(x.proximo.getDate())}`, subida: x.sube ? r1(x.sube) : undefined })),
     };
   }
   const ig = igState.snapshot;
@@ -1439,6 +1539,12 @@ async function categorizarConClaude() {
 /** Solo euros y nada interno: lo que cuenta para ingresos y gastos. */
 const cuenta = (m: Mov) => m.divisa === "EUR" && catOf(m) !== "Interno";
 
+/** Cargos de la categoría Suscripciones en un mes (AAAA-MM), del más antiguo al más reciente. */
+function subsDelMes(list: Mov[], k: string) {
+  return list.filter(m => m.fecha.startsWith(k) && m.importe < 0 && cuenta(m) && catOf(m) === "Suscripciones");
+}
+const nombreSub = (m: Mov) => m.concepto && /premium|suscrip/i.test(m.concepto) ? m.concepto : m.descripcion;
+
 function mediana(xs: number[]) {
   const s = [...xs].sort((a, b) => a - b), n = s.length;
   return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0;
@@ -1653,10 +1759,10 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
     const g = svgEl("g", { class: "col", "data-mes": k }, svg);
     svgEl("rect", { x, y: top - 8, width: gw, height: base - top + 30, fill: K.ph, "fill-opacity": sel ? .08 : 0, class: "hit" }, g);
     const hi = zero - Y(d.ing), hg = zero - Y(d.gas);
-    if (hi > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hi, width: bw, height: hi, fill: K.ph, "fill-opacity": sel ? 1 : .7, class: "grow", style: `--i:${i}` }, g);
-    // La nómina, abajo de la barra de ingresos y más iluminada.
+    // Ingresos: el resto, más claro, encima; la nómina, abajo en verde fósforo.
+    if (hi > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hi, width: bw, height: hi, fill: K.hi, "fill-opacity": sel ? 1 : .75, class: "grow", style: `--i:${i}` }, g);
     const hn = zero - Y(d.nom ?? 0);
-    if (hn > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hn, width: bw, height: hn, fill: K.hi, class: "grow glow", style: `--i:${i}` }, g);
+    if (hn > 0) svgEl("rect", { x: x + gw / 2 - bw - 1, y: zero - hn, width: bw, height: hn, fill: K.ph, "fill-opacity": sel ? 1 : .85, class: "grow", style: `--i:${i}` }, g);
     if (hg > 0) svgEl("rect", { x: x + gw / 2 + 1, y: zero - hg, width: bw, height: hg, fill: "url(#hatch)", stroke: K.text, "stroke-width": 1, class: "grow", style: `--i:${i}` }, g);
     label(g, x + gw / 2, base + 16, MESES[mesDe(k).getMonth()], { "text-anchor": "middle", "font-size": 9, fill: sel ? K.hi : K.grid });
     const t = svgEl("title", {}, g); t.textContent = `${mesNombre(k)} · ingresos ${eur(d.ing)} · gastos ${eur(d.gas)} · patrimonio ${eur(serie[i])}`;
@@ -1674,7 +1780,7 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
     svgEl("rect", { x: x - 3, y: y - 3, width: 6, height: 6, fill: "none", stroke: K.alert, class: "ping" }, svg);
     svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.alert, class: "fade" }, svg);
     const ax = Math.min(Math.max(x, l + 60), r - 60);
-    label(svg, ax, y - 6, `MÁX ${eur(pico.v)} · ${pico.ing ? "INGRESOS" : "GASTOS"} ${MESES[mesDe(keys[pico.i]).getMonth()]}`, { "text-anchor": "middle", "font-size": 9, fill: K.alert, class: "fade money" });
+    label(svg, ax, y - 6, `MÁX ${eur(pico.v)} · ${pico.ing ? "INGRESOS" : "GASTOS"} ${MESES[mesDe(keys[pico.i]).getMonth()]}`, { "text-anchor": "middle", "font-size": 9, fill: K.hi, class: "fade money" });
   }
   const pts = accs.map((v, i) => [l + i * gw + gw / 2, YL(v)]);
   svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: K.hi, "stroke-width": 1.6, pathLength: 1, class: "draw glow" }, svg);
@@ -1687,14 +1793,14 @@ function flow(meses: Map<string, Mes>, keys: string[], serie: number[]) {
     svgEl("rect", { x: lx - 3.5, y: ly - 3.5, width: 7, height: 7, fill: "none", stroke: K.alert, class: "ping" }, svg);
     svgEl("rect", { x: lx - 3, y: ly - 3, width: 6, height: 6, fill: K.alert, class: "fade glow" }, svg);
   }
-  label(svg, Math.min(lx, r - 34), ly - 9, `${esUltimo ? "MÁX " : ""}${eur(accs[accs.length - 1])}`, { "text-anchor": "middle", fill: esUltimo ? K.alert : K.hi, class: "fade money" });
+  label(svg, Math.min(lx, r - 34), ly - 9, `${esUltimo ? "MÁX " : ""}${eur(accs[accs.length - 1])}`, { "text-anchor": "middle", fill: K.hi, class: "fade money" });
   const [fx, fy] = pts[0];
   if (iMax !== 0) label(svg, fx + 2, fy - 9, eur(accs[0]), { "text-anchor": "start", fill: K.text, "font-size": 9, class: "fade money" });
   if (!esUltimo) {
     const [mx, my] = pts[iMax];
     svgEl("rect", { x: mx - 3.5, y: my - 3.5, width: 7, height: 7, fill: "none", stroke: K.alert, class: "ping" }, svg);
     svgEl("rect", { x: mx - 3, y: my - 3, width: 6, height: 6, fill: K.alert, class: "fade glow" }, svg);
-    label(svg, Math.min(Math.max(mx, l + 50), r - 50), my - 10, `MÁX ${eur(accs[iMax])} · ${MESES[mesDe(keys[iMax]).getMonth()]}`, { "text-anchor": "middle", fill: K.alert, "font-size": 9.5, class: "fade money" });
+    label(svg, Math.min(Math.max(mx, l + 50), r - 50), my - 10, `MÁX ${eur(accs[iMax])} · ${MESES[mesDe(keys[iMax]).getMonth()]}`, { "text-anchor": "middle", fill: K.hi, "font-size": 9.5, class: "fade money" });
   }
 }
 
@@ -1732,6 +1838,18 @@ function movs(list: Mov[]) {
       <span class="amt money${m.importe > 0 ? " pos" : ""}">${m.importe > 0 ? "+" : ""}${fmt(m.importe, 2)}${m.divisa === "EUR" ? " €" : ""}</span>
     </div>`;
   }).join("");
+}
+
+/** Lo que ya se ha cobrado en Suscripciones en el mes elegido. */
+function subsMes(list: Mov[]) {
+  const k = mesSel ?? mesKey(new Date());
+  const ms = subsDelMes(list, k);
+  const tot = ms.reduce((s, m) => s - m.importe, 0);
+  $("subs-mes-h").textContent = `Suscripciones pagadas · ${MESES[mesDe(k).getMonth()]}`;
+  $("subs-mes").innerHTML = ms.length
+    ? ms.map(m => `<tr><td>${esc(nombreSub(m))}<span class="note">${ddmm(fechaDe(m.fecha))}${m.estado === "pendiente" ? " · pendiente" : ""}</span></td><td class="r money">${fmt(-m.importe, 2)} €</td></tr>`).join("")
+      + `<tfoot><tr><td>Total del mes · ${ms.length} cargo${ms.length === 1 ? "" : "s"}</td><td class="r money">${eur(tot, 2)}</td></tr></tfoot>`
+    : `<tr><td class="muted">${list.length ? "Ningún cargo de suscripciones este mes." : "Sin datos."}</td></tr>`;
 }
 
 function subs(list: Sub[]) {
@@ -1839,7 +1957,9 @@ function renderDinero(d: Dinero) {
   flow(meses, keys, seriePatrimonio(list, s, keys));
   cats(m, media);
   movs(list);
+  subsMes(list);
   subs(subsCache);
+  heatGastos();
   // Revisión: comercios de gasto sin categoría clara (ni reglas, ni Claude, ni tú).
   const pendientes = [...sinCategoria(list).keys()].filter(k => { const ia = rvState.categorias_ia?.[k]; return !ia || ia === "Otros"; }).length;
   const rev = $<HTMLButtonElement>("revisar");

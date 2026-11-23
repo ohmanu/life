@@ -62,7 +62,26 @@ pub struct Snapshot {
     /// Seguidores por día (guardados por LIFE en cada sincronización).
     #[serde(default)]
     pub historia: Vec<Dia>,
+    /// Publicaciones e historias por día del último año (guardadas por LIFE).
+    #[serde(default)]
+    pub actividad: Vec<DiaPub>,
+    /// (id, fecha local, tipo) de lo leído en esta sincronización, para guardarlo en life.db.
+    #[serde(skip)]
+    pub leidas: Vec<(String, String, String)>,
     pub synced_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DiaPub {
+    pub fecha: String,
+    pub posts: i64,
+    pub historias: i64,
+}
+
+/// «2026-11-20T18:00:00+0000» → fecha local «2026-11-20».
+fn fecha_local(ts: &str) -> Option<String> {
+    let t = chrono::DateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S%z").ok()?;
+    Some(t.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
 }
 
 struct Api {
@@ -174,6 +193,38 @@ pub async fn fetch(token: &str) -> Result<Snapshot, String> {
             comments: i(&m["comments_count"]),
             ..Default::default()
         });
+    }
+
+    // Fechas de todo el último año (solo id, fecha y tipo; hasta 10 páginas) para la cuadrícula.
+    let hace_un_ano = (chrono::Local::now() - chrono::Duration::days(372)).format("%Y-%m-%d").to_string();
+    let mut sig: Option<String> = None;
+    for pagina in 0..10 {
+        let v = match &sig {
+            None => api.get(&format!("{yo}/media"), &[("fields", "id,timestamp,media_product_type"), ("limit", "100")]).await,
+            Some(url) => api.get(url, &[]).await,
+        };
+        let Ok(v) = v else { break };
+        let mut viejo = false;
+        for m in v["data"].as_array().cloned().unwrap_or_default() {
+            let (Some(id), Some(f)) = (m["id"].as_str(), m["timestamp"].as_str().and_then(fecha_local)) else { continue };
+            if f < hace_un_ano {
+                viejo = true;
+                continue;
+            }
+            snap.leidas.push((id.to_string(), f, m["media_product_type"].as_str().unwrap_or("FEED").to_string()));
+        }
+        sig = v["paging"]["next"].as_str().map(str::to_string);
+        if viejo || sig.is_none() || pagina == 9 {
+            break;
+        }
+    }
+    // Historias activas (Meta solo da las de las últimas 24 h; LIFE las guarda en cada lectura).
+    if let Ok(v) = api.get(&format!("{yo}/stories"), &[("fields", "id,timestamp")]).await {
+        for m in v["data"].as_array().cloned().unwrap_or_default() {
+            if let (Some(id), Some(f)) = (m["id"].as_str(), m["timestamp"].as_str().and_then(fecha_local)) {
+                snap.leidas.push((id.to_string(), f, "STORY".into()));
+            }
+        }
     }
 
     // Estadísticas de las más recientes. Si una métrica no vale para ese tipo, se reintenta con menos.

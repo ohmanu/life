@@ -92,6 +92,16 @@ const tabs = [
               </div>
             </div>
             <div class="cell c-12">
+              <div class="cell-h"><h3>Gastos · 52 semanas</h3><span class="jp">支出</span></div>
+              <div class="heat-wrap"><svg class="heat-svg" id="heat-gas" viewBox="0 0 776 120" style="min-width:640px" role="img" aria-label="Mapa de gastos por día del último año"></svg></div>
+              <div class="foot"><span id="heat-gas-foot"></span><span>COLOR SEGÚN LO GASTADO · PASA EL RATÓN POR UN DÍA</span></div>
+            </div>
+            <div class="cell c-12">
+              <div class="cell-h"><h3>Publicaciones · 52 semanas</h3><span class="jp">投稿</span></div>
+              <div class="heat-wrap"><svg class="heat-svg" id="heat-ig" viewBox="0 0 776 120" style="min-width:640px" role="img" aria-label="Mapa de publicaciones e historias de Instagram del último año"></svg></div>
+              <div class="foot"><span id="heat-ig-foot"></span><span>HISTORIAS DESDE QUE LIFE LAS VA GUARDANDO</span></div>
+            </div>
+            <div class="cell c-12">
               <div class="cell-h"><h3>Contribuciones · 52 semanas</h3><span class="jp">貢献</span></div>
               <div class="heat-wrap"><svg class="heat-svg" id="heat" viewBox="0 0 776 120" style="min-width:640px" role="img" aria-label="Mapa de contribuciones de GitHub del último año"></svg></div>
               <div class="foot"><span id="heat-sync">SIN SINCRONIZAR</span><span>CADA HORA</span></div>
@@ -179,7 +189,9 @@ const tabs = [
               <div class="foot"><span>LA CATEGORÍA QUE ELIGES SE RECUERDA PARA TODO EL COMERCIO</span><span id="movs-n"></span></div>
             </div>
             <div class="cell c-5">
-              <div class="cell-h"><h3>Suscripciones y recurrentes</h3><span class="jp">定期購読</span></div>
+              <div class="cell-h"><h3 id="subs-mes-h">Suscripciones pagadas</h3><span class="jp">支払済</span></div>
+              <table class="subs" id="subs-mes"></table>
+              <div class="cell-h sub-h"><h3>Suscripciones y recurrentes</h3><span class="jp">定期購読</span></div>
               <table class="subs" id="subs"></table>
               <div class="cell-h sub-h"><h3>Próximos cobros · 30 días</h3><span class="jp">予定</span></div>
               <div class="rows" id="proximos"></div>

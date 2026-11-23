@@ -169,7 +169,26 @@ const MIGRATIONS: &[&str] = &[
      WHERE fuente = 'banco' AND importe > 0 AND interno = 0 AND tipo IN ('otro', 'transferencia', 'recarga')
        AND descripcion IN (SELECT DISTINCT descripcion FROM transacciones WHERE tipo = 'nomina' AND concepto = 'Desde Sabadell');
     ",
+    // 14 · encargos borrados a mano: solo una huella del correo, para que Gmail no los vuelva a traer
+    "
+    CREATE TABLE encargos_borrados (huella TEXT PRIMARY KEY, uid INTEGER);
+    ",
+    // 15 · publicaciones e historias de Instagram por fecha (las historias solo se ven 24 h: LIFE las va guardando)
+    "
+    CREATE TABLE ig_publicaciones (id TEXT PRIMARY KEY, fecha TEXT NOT NULL, tipo TEXT NOT NULL);
+    CREATE INDEX ig_publicaciones_fecha ON ig_publicaciones (fecha);
+    ",
 ];
+
+/// Huella de un id de correo (FNV-1a de 64 bits): sirve para reconocerlo sin guardarlo.
+pub fn huella(s: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
 
 pub fn categorias_ia(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
     let mut st = conn.prepare("SELECT comercio, categoria FROM categorias_ia")?;
@@ -393,6 +412,13 @@ pub fn set_ajuste(conn: &Connection, clave: &str, valor: &str) -> rusqlite::Resu
 /// Guarda un encargo leído de Gmail. Si ya existía, solo actualiza el UID: el estado que
 /// marcaste a mano no se pisa.
 pub fn insert_encargo(conn: &Connection, e: &Encargo) -> rusqlite::Result<bool> {
+    let borrado: bool = conn
+        .query_row("SELECT 1 FROM encargos_borrados WHERE huella = ?1", [huella(&e.id)], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if borrado {
+        return Ok(false);
+    }
     let n = conn.execute(
         "INSERT INTO encargos (id, uid, recibido, asunto, tipo, que, nombre, correo, telefono, empresa,
                                fecha, lugar, web, presupuesto, idioma, mensaje, estado)
@@ -427,8 +453,48 @@ pub fn encargos(conn: &Connection) -> rusqlite::Result<Vec<Encargo>> {
 }
 
 pub fn known_uids(conn: &Connection) -> rusqlite::Result<HashSet<u32>> {
-    let mut st = conn.prepare("SELECT uid FROM encargos WHERE uid IS NOT NULL")?;
+    let mut st = conn.prepare(
+        "SELECT uid FROM encargos WHERE uid IS NOT NULL UNION SELECT uid FROM encargos_borrados WHERE uid IS NOT NULL",
+    )?;
     let rows = st.query_map([], |r| r.get::<_, u32>(0))?;
+    rows.collect()
+}
+
+/// Borra un encargo de life.db para siempre. Queda solo la huella del correo y su UID, para
+/// que la siguiente lectura de Gmail no lo vuelva a traer.
+pub fn borrar_encargo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+    let uid: Option<i64> = conn
+        .query_row("SELECT uid FROM encargos WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?
+        .flatten();
+    conn.execute(
+        "INSERT INTO encargos_borrados (huella, uid) VALUES (?1, ?2) ON CONFLICT(huella) DO UPDATE SET uid = excluded.uid",
+        params![huella(id), uid],
+    )?;
+    conn.execute("DELETE FROM ajustes WHERE clave = ?1", [format!("aviso48:{id}")])?;
+    conn.execute("DELETE FROM encargos WHERE id = ?1", [id])
+}
+
+// ── Instagram ─────────────────────────────────────────────────────────────
+
+pub fn guardar_publicaciones(conn: &Connection, pubs: &[(String, String, String)]) -> rusqlite::Result<()> {
+    let mut st = conn.prepare(
+        "INSERT INTO ig_publicaciones (id, fecha, tipo) VALUES (?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET fecha = excluded.fecha, tipo = excluded.tipo",
+    )?;
+    for (id, fecha, tipo) in pubs {
+        st.execute(params![id, fecha, tipo])?;
+    }
+    Ok(())
+}
+
+/// Por día (fecha local): (fecha, publicaciones, historias), del último año.
+pub fn actividad_ig(conn: &Connection, desde: &str) -> rusqlite::Result<Vec<(String, i64, i64)>> {
+    let mut st = conn.prepare(
+        "SELECT fecha, SUM(tipo != 'STORY'), SUM(tipo = 'STORY') FROM ig_publicaciones
+         WHERE fecha >= ?1 GROUP BY fecha ORDER BY fecha",
+    )?;
+    let rows = st.query_map([desde], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
     rows.collect()
 }
 

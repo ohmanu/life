@@ -176,6 +176,15 @@ async fn sync_instagram(app: &AppHandle) -> Result<instagram::Snapshot, String> 
                 rusqlite::params![hoy, snap.followers],
             );
             snap.historia = ig_historia(&conn);
+            if let Err(e) = db::guardar_publicaciones(&conn, &snap.leidas) {
+                log::warn!("instagram: no se guardaron las publicaciones ({e})");
+            }
+            let desde = (chrono::Local::now() - chrono::Duration::days(372)).format("%Y-%m-%d").to_string();
+            snap.actividad = db::actividad_ig(&conn, &desde)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(fecha, posts, historias)| instagram::DiaPub { fecha, posts, historias })
+                .collect();
             let json = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
             db::save_snapshot(&conn, "instagram", &json, &snap.synced_at).map_err(|e| e.to_string())?;
             db::log_sync(&conn, "instagram", true, None);
@@ -848,6 +857,21 @@ fn encargo_estado(app: AppHandle, id: String, estado: String) -> Result<GmailVie
     Ok(view)
 }
 
+/// Borra el encargo de LIFE para siempre (en Gmail no se toca nada).
+#[tauri::command]
+fn encargo_borrar(app: AppHandle, id: String) -> Result<GmailView, String> {
+    {
+        let state = app.state::<Db>();
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        if db::borrar_encargo(&conn, &id).map_err(|e| e.to_string())? == 0 {
+            return Err("Ese encargo no existe.".into());
+        }
+    }
+    let view = gmail_view(&app)?;
+    update_tray(&app, &view);
+    Ok(view)
+}
+
 fn pct(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
@@ -1428,6 +1452,7 @@ pub fn run() {
             gmail_sync,
             gmail_disconnect,
             encargo_estado,
+            encargo_borrar,
             encargo_abrir,
             dinero_status,
             dinero_categoria,
