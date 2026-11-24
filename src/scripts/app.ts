@@ -1156,9 +1156,10 @@ function contexto() {
     }
     const comercios = [...porComercio.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total)).slice(0, 150)
       .map(c => ({ ...c, total: r1(c.total) }));
-    const manual = Object.entries(rvState.categorias).map(([k, categoria]) => ({
-      comercio: rvState.movimientos.find(m => m.comercio === k)?.descripcion ?? k, categoria,
-    }));
+    const manual = Object.entries(rvState.categorias).map(([k, categoria]) => {
+      const [com, concepto] = k.split(SEP_CONCEPTO);
+      return { comercio: rvState.movimientos.find(m => m.comercio === com)?.descripcion ?? com, ...(concepto ? { solo_con_concepto: concepto } : {}), categoria };
+    });
     dinero = {
       moneda: "EUR",
       nota_categorias: "La categoría de cada movimiento es la que usa LIFE: la que el usuario eligió a mano manda; si no, reglas automáticas. Usa estas categorías (por ejemplo, «Suscripciones») tal cual.",
@@ -1532,10 +1533,25 @@ function autoCat(m: Mov): string {
   if (m.tipo === "transferencia") return "Transferencias";
   return "Otros";
 }
+/* Categoría a mano por concepto: en transferencias y Bizum con concepto, la que eliges se guarda
+ * para «comercio | concepto» (sin cifras ni meses, para que «Alquiler noviembre» y «Alquiler
+ * diciembre» vayan juntos) y no para todo lo que llega de esa persona. En la tabla `categorias`
+ * conviven ambas claves; la del concepto manda sobre la del comercio. */
+const MESES_RE = /\b(ene(ro)?|feb(rero)?|mar(zo)?|abr(il)?|may(o)?|jun(io)?|jul(io)?|ago(sto)?|sep(t(iembre)?)?|set(iembre)?|oct(ubre)?|nov(iembre)?|dic(iembre)?)\b/g;
+const SEP_CONCEPTO = " | ";
+function claveConcepto(m: Mov): string | null {
+  if (!m.concepto) return null;
+  const n = m.concepto.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\p{L}]+/gu, " ").replace(MESES_RE, " ").replace(/\s+/g, " ").trim();
+  return n ? m.comercio + SEP_CONCEPTO + n : null;
+}
+function manualDe(m: Mov): string {
+  const k = claveConcepto(m);
+  return (k && rvState.categorias[k]) || rvState.categorias[m.comercio] || "";
+}
 /** Categoría: la que elegiste a mano; si no, las reglas; y donde las reglas no saben (Otros o
  *  Transferencias), la que propuso Claude. */
 function catOf(m: Mov): string {
-  const manual = rvState.categorias[m.comercio];
+  const manual = manualDe(m);
   if (manual) return manual;
   const a = autoCat(m);
   if (a === "Otros" || a === "Transferencias") {
@@ -1548,7 +1564,7 @@ function catOf(m: Mov): string {
 function sinCategoria(list: Mov[]) {
   const vistos = new Map<string, Mov[]>();
   for (const m of list) {
-    if (m.importe >= 0 || m.interno || m.divisa !== "EUR" || rvState.categorias[m.comercio]) continue;
+    if (m.importe >= 0 || m.interno || m.divisa !== "EUR" || manualDe(m)) continue;
     const a = autoCat(m);
     if (a !== "Otros" && a !== "Transferencias") continue;
     (vistos.get(m.comercio) ?? vistos.set(m.comercio, []).get(m.comercio)!).push(m);
@@ -1875,7 +1891,7 @@ function movs(list: Mov[]) {
   el.innerHTML = rows.map(m => {
     const c = catOf(m);
     const cat = editandoCats
-      ? `<select data-comercio="${esc(m.comercio)}" aria-label="Categoría de ${esc(m.descripcion)}">${CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("")}</select>`
+      ? `<select data-id="${esc(m.id)}" aria-label="Categoría de ${esc(m.descripcion)}">${CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("")}</select>`
       : `<span class="cat-v">${esc(c)}</span>`;
     const extra = [m.concepto ? `«${m.concepto}»` : "", m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
     return `<div class="mov${c === "Interno" ? " int" : c === "Nómina" ? " nomina" : ""}">
@@ -1893,10 +1909,17 @@ function subsMes(list: Mov[]) {
   const ms = subsDelMes(list, k);
   const tot = ms.reduce((s, m) => s - m.importe, 0);
   $("subs-mes-h").textContent = `Suscripciones pagadas · ${MESES[mesDe(k).getMonth()]}`;
-  $("subs-mes").innerHTML = ms.length
-    ? ms.map(m => `<tr><td>${esc(nombreSub(m))}<span class="note">${ddmm(fechaDe(m.fecha))}${m.estado === "pendiente" ? " · pendiente" : ""}</span></td><td class="r money">${fmt(-m.importe, 2)} €</td></tr>`).join("")
-      + `<tfoot><tr><td>Total del mes · ${ms.length} cargo${ms.length === 1 ? "" : "s"}</td><td class="r money">${eur(tot, 2)}</td></tr></tfoot>`
-    : `<tr><td class="muted">${list.length ? "Ningún cargo de suscripciones este mes." : "Sin datos."}</td></tr>`;
+  // En lo que va de año: del 1 de enero hasta el final del mes elegido.
+  const ano = k.slice(0, 4);
+  const delAno = list.filter(m => m.fecha.startsWith(ano) && m.fecha.slice(0, 7) <= k && m.importe < 0 && cuenta(m) && catOf(m) === "Suscripciones");
+  const totAno = delAno.reduce((s, m) => s - m.importe, 0);
+  const cargos = (n: number) => `${n} cargo${n === 1 ? "" : "s"}`;
+  const filaAno = `<tr><td>En lo que va de ${ano} · ${cargos(delAno.length)}</td><td class="r money">${eur(totAno, 2)}</td></tr>`;
+  $("subs-mes").innerHTML = !list.length ? `<tr><td class="muted">Sin datos.</td></tr>`
+    : (ms.length
+      ? ms.map(m => `<tr><td>${esc(nombreSub(m))}<span class="note">${ddmm(fechaDe(m.fecha))}${m.estado === "pendiente" ? " · pendiente" : ""}</span></td><td class="r money">${fmt(-m.importe, 2)} €</td></tr>`).join("")
+      : `<tr><td class="muted">Ningún cargo de suscripciones este mes.</td><td></td></tr>`)
+      + `<tfoot>${ms.length ? `<tr><td>Total del mes · ${cargos(ms.length)}</td><td class="r money">${eur(tot, 2)}</td></tr>` : ""}${filaAno}</tfoot>`;
 }
 
 function subs(list: Sub[]) {
@@ -2112,17 +2135,24 @@ const rvMsg = (text: string, kind: "ok" | "err" | "" = "") =>
 $("movs-edit").addEventListener("click", () => { editandoCats = !editandoCats; movs(rvState.movimientos); });
 $("movs").addEventListener("change", async e => {
   const sel = e.target as HTMLSelectElement;
-  const comercio = sel.dataset.comercio;
-  if (!comercio) return;
-  const muestra = rvState.movimientos.find(m => m.comercio === comercio)!;
-  const valor = sel.value === autoCat(muestra) ? "" : sel.value;
-  const n = rvState.movimientos.filter(m => m.comercio === comercio).length;
+  const muestra = rvState.movimientos.find(m => m.id === sel.dataset.id);
+  if (!muestra) return;
+  // Con concepto (transferencias, Bizum), la elección vale solo para ese concepto, y la que hubiera
+  // para todo el comercio se quita: así se separan, p. ej., la nómina de otras transferencias de la misma persona.
+  const kc = claveConcepto(muestra);
+  const cambios: [string, string][] = kc
+    ? [...(rvState.categorias[muestra.comercio] ? [[muestra.comercio, ""] as [string, string]] : []), [kc, sel.value === autoCat(muestra) ? "" : sel.value]]
+    : [[muestra.comercio, sel.value === autoCat(muestra) ? "" : sel.value]];
+  const n = rvState.movimientos.filter(m => kc ? claveConcepto(m) === kc : m.comercio === muestra.comercio).length;
   try {
-    const d = TAURI
-      ? await invoke<Dinero>("dinero_categoria", { comercio, categoria: valor })
-      : { ...rvState, categorias: Object.fromEntries(Object.entries({ ...rvState.categorias, [comercio]: valor }).filter(([, v]) => v)) };
+    let d: Dinero = rvState;
+    for (const [comercio, categoria] of cambios) {
+      d = TAURI
+        ? await invoke<Dinero>("dinero_categoria", { comercio, categoria })
+        : { ...d, categorias: Object.fromEntries(Object.entries({ ...d.categorias, [comercio]: categoria }).filter(([, v]) => v)) };
+    }
     renderDinero(d);
-    rvMsg(`«${sel.value}» para ${n} movimiento${n === 1 ? "" : "s"} de ${muestra.descripcion}.`, "ok");
+    rvMsg(`«${sel.value}» para ${n} movimiento${n === 1 ? "" : "s"} de ${muestra.descripcion}${kc ? ` con concepto «${muestra.concepto}»` : ""}.`, "ok");
   } catch (err) { rvMsg(String(err), "err"); }
 });
 

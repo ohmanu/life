@@ -282,10 +282,8 @@ button { font: inherit; }
 .cat .fill.hl { background: var(--alert); box-shadow: none; }
 .cat .amt { text-align: right; font-variant-numeric: tabular-nums; color: var(--hi); }
 .cat.total { border-top: 1px dashed var(--grid); padding-top: 6px; }
-/* 25 filas a la vista: cada fila mide --fila (cabe el combo de 22px), con texto o con combos. */
-.movs { --fila: 28px; max-height: calc(var(--fila) * 25); overflow-y: auto; display: grid; align-content: start; padding-right: var(--s3); scrollbar-gutter: stable; }
-.movs::-webkit-scrollbar { width: 8px; }
-.movs::-webkit-scrollbar-thumb { background: var(--grid); }
+/* Todas las filas del mes, sin desplazamiento propio; cada fila mide --fila (cabe el combo de 22px), con texto o con combos. */
+.movs { --fila: 28px; display: grid; align-content: start; }
 .mov { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) 11em 7.5em; gap: var(--s3); align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px dashed var(--grid); }
 .mov .ds { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hi); user-select: text; }
 .mov .ds small { color: var(--grid); margin-left: 6px; font-size: 10.5px; }
