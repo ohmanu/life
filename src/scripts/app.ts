@@ -133,7 +133,7 @@ function countUp(root: HTMLElement | null, siempre = false) {
 }
 
 /* ---------- sonidos ---------- */
-type Sonido = "pestana" | "encargo" | "graficas" | "inicio" | "error" | "radar" | "combo" | "cerrar";
+type Sonido = "pestana" | "encargo" | "graficas" | "inicio" | "error" | "radar" | "combo" | "cerrar" | "claude";
 const sonidosCache = new Map<Sonido, string>();
 let sonidosOn = (() => { try { return localStorage.getItem("life-sonidos") !== "0"; } catch { return true; } })();
 
@@ -200,6 +200,10 @@ document.addEventListener("keydown", e => {
   if (e.target instanceof HTMLSelectElement && (e.key === " " || e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) sonar("combo", undefined, .5);
 });
 document.addEventListener("change", e => { if (e.target instanceof HTMLSelectElement) sonar("pestana", undefined, .6); }, true);
+
+/* Preguntar a LIFE y regenerar el parte: selección del códec. */
+$("ask-form").addEventListener("submit", () => sonar("claude", undefined, .6), true);
+$("parte-regen").addEventListener("click", () => sonar("claude", undefined, .6), true);
 
 /* ---------- pestañas ---------- */
 const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]')];
