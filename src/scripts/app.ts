@@ -133,7 +133,7 @@ function countUp(root: HTMLElement | null, siempre = false) {
 }
 
 /* ---------- sonidos ---------- */
-type Sonido = "pestana" | "encargo" | "graficas" | "inicio" | "error" | "radar" | "combo" | "cerrar" | "claude";
+type Sonido = "pestana" | "encargo" | "graficas" | "inicio" | "error" | "radar" | "combo" | "cerrar" | "claude" | "hecho" | "eleccion";
 const sonidosCache = new Map<Sonido, string>();
 let sonidosOn = (() => { try { return localStorage.getItem("life-sonidos") !== "0"; } catch { return true; } })();
 
@@ -199,7 +199,7 @@ document.addEventListener("pointerdown", e => { if ((e.target as Element).closes
 document.addEventListener("keydown", e => {
   if (e.target instanceof HTMLSelectElement && (e.key === " " || e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) sonar("combo", undefined, .5);
 });
-document.addEventListener("change", e => { if (e.target instanceof HTMLSelectElement) sonar("pestana", undefined, .6); }, true);
+document.addEventListener("change", e => { if (e.target instanceof HTMLSelectElement) sonar("eleccion", undefined, .6); }, true);
 
 /* Preguntar a LIFE y regenerar el parte: selección del códec. */
 $("ask-form").addEventListener("submit", () => sonar("claude", undefined, .6), true);
@@ -2145,7 +2145,7 @@ $("flow").addEventListener("click", e => {
 const rvMsg = (text: string, kind: "ok" | "err" | "" = "") =>
   document.querySelectorAll<HTMLElement>("[data-rv-msg]").forEach(m => { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); });
 
-$("movs-edit").addEventListener("click", () => { editandoCats = !editandoCats; movs(rvState.movimientos); });
+$("movs-edit").addEventListener("click", () => { if (editandoCats) sonar("hecho", undefined, .6); editandoCats = !editandoCats; movs(rvState.movimientos); });
 $("movs").addEventListener("change", async e => {
   const sel = e.target as HTMLSelectElement;
   const muestra = rvState.movimientos.find(m => m.id === sel.dataset.id);
