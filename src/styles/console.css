@@ -164,7 +164,7 @@ button { font: inherit; }
 #radar-hist { margin-top: var(--s2); }
 #radar-hist g { cursor: var(--cur); }
 .foot .btn { padding: 2px 9px; font-size: 10.5px; }
-.radar-nota { font-size: 11px; color: var(--text); margin-top: var(--s2); min-height: 1.4em; text-align: center; }
+.radar-nota { font-size: 11px; line-height: 1.45; color: var(--text); margin-top: var(--s2); min-height: 2.9em; text-align: center; }
 .radar-nota .muted { font-size: 10px; }
 .spin { transform-origin: 150px 150px; animation: spin 60s linear infinite; }
 
@@ -230,7 +230,8 @@ button { font: inherit; }
 
 /* encargos · tablero */
 .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s3); align-items: start; }
-@media (max-width: 1100px) { .board { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.board.con-desc { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .board, .board.con-desc { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .col-h { display: flex; justify-content: space-between; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ph); border-bottom: 1px solid var(--grid); padding-bottom: 4px; margin-bottom: var(--s2); }
 .col-h b { color: var(--hi); font-weight: 500; }
 .col-list { display: grid; gap: 6px; }

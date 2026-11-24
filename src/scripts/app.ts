@@ -652,7 +652,10 @@ function board(list: Encargo[]) {
       : `<div class="board-empty">Conecta Gmail en <b>F5 · Conexiones</b> para traer las hojas de encargo de glutamatocult.com.</div>`;
     return;
   }
-  el.innerHTML = COLUMNAS.map(col => {
+  const desc = list.filter(e => e.estado === "descartado").length;
+  if (!desc) verDescartados = false;
+  el.classList.toggle("con-desc", verDescartados);
+  el.innerHTML = [...COLUMNAS, ...(verDescartados ? ["descartado"] : [])].map(col => {
     const items = list.filter(e => e.estado === col);
     const cards = items.map((e, i) => `
       <button type="button" class="card${tarde(e) ? " late" : ""}" data-id="${esc(e.id)}" aria-pressed="${e.id === selected}" style="--i:${i}">
@@ -663,9 +666,15 @@ function board(list: Encargo[]) {
     return `<div class="col"><div class="col-h"><span>${NOMBRE_ESTADO[col]}</span><b>${items.length}</b></div>
       <div class="col-list">${cards || `<div class="col-empty">—</div>`}</div></div>`;
   }).join("");
-  const desc = list.filter(e => e.estado === "descartado").length;
   $("enc-foot").textContent = `GMAIL · SOLO LECTURA · CADA 10 MIN${desc ? ` · ${desc} DESCARTADO${desc === 1 ? "" : "S"}` : ""}`;
+  const b = $<HTMLButtonElement>("enc-desc");
+  b.hidden = !desc;
+  b.textContent = verDescartados ? "Ocultar descartados" : "Ver descartados";
+  b.setAttribute("aria-pressed", String(verDescartados));
 }
+/** Los descartados no tienen columna fija: «Ver descartados» la añade al final del tablero. */
+let verDescartados = false;
+$("enc-desc").addEventListener("click", () => { verDescartados = !verDescartados; board(gmState.encargos); });
 
 function ficha(e: Encargo | undefined) {
   const el = $("ficha");
