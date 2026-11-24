@@ -282,10 +282,11 @@ button { font: inherit; }
 .cat .fill.hl { background: var(--alert); box-shadow: none; }
 .cat .amt { text-align: right; font-variant-numeric: tabular-nums; color: var(--hi); }
 .cat.total { border-top: 1px dashed var(--grid); padding-top: 6px; }
-.movs { max-height: 430px; overflow-y: auto; display: grid; align-content: start; padding-right: var(--s3); scrollbar-gutter: stable; }
+/* 25 filas a la vista: cada fila mide --fila (cabe el combo de 22px), con texto o con combos. */
+.movs { --fila: 28px; max-height: calc(var(--fila) * 25); overflow-y: auto; display: grid; align-content: start; padding-right: var(--s3); scrollbar-gutter: stable; }
 .movs::-webkit-scrollbar { width: 8px; }
 .movs::-webkit-scrollbar-thumb { background: var(--grid); }
-.mov { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) 11em 6.5em; gap: var(--s3); align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px dashed var(--grid); }
+.mov { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) 11em 7.5em; gap: var(--s3); align-items: center; font-size: 12px; padding: 4px 0; border-top: 1px dashed var(--grid); }
 .mov .ds { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hi); user-select: text; }
 .mov .ds small { color: var(--grid); margin-left: 6px; font-size: 10.5px; }
 .mov .amt { text-align: right; font-variant-numeric: tabular-nums; color: var(--hi); }
@@ -295,6 +296,10 @@ button { font: inherit; }
   font: inherit; font-size: 11px; width: 100%; background: var(--bg-2); color: var(--text); border: 1px solid var(--grid); padding: 2px 4px; cursor: var(--cur-link);
 }
 .mov select:focus { outline: none; border-color: var(--ph); }
+.mov .cat-v { font-size: 11px; color: var(--text); padding: 2px 5px; border: 1px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mov.int .cat-v { color: var(--grid); }
+.movs .mov { height: var(--fila); padding: 0; box-sizing: border-box; }
+.mov .amt { white-space: nowrap; }
 .subs { width: 100%; border-collapse: collapse; font-size: 12px; }
 .subs td { border-top: 1px dashed var(--grid); padding: 5px 0; vertical-align: top; }
 .subs td.r { text-align: right; font-variant-numeric: tabular-nums; color: var(--hi); white-space: nowrap; padding-left: var(--s3); }

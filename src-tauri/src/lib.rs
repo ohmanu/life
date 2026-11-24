@@ -263,8 +263,12 @@ fn instagram_disconnect(app: AppHandle) -> Result<(), String> {
 /// Efectos de sonido. Van dentro del instalador (recursos `sonidos/`, uso personal) pero no al
 /// repositorio público (`src-tauri/sonidos/` está en .gitignore). Si faltan, se buscan en el
 /// ajuste `sonidos_dir` o en `core-inspiration/FX`.
-const SONIDOS: [(&str, &str); 4] = [
+const SONIDOS: [(&str, &str); 8] = [
     ("pestana", "0x09-wapon-select.wav"),
+    ("error", "0x23-no-pass-error.wav"),
+    ("radar", "0x0E-radar-load.wav"),
+    ("combo", "0x15-nano-machine-open.wav"),
+    ("cerrar", "0x21-codec-close.wav"),
     ("encargo", "0x10-codec-call.wav"),
     ("graficas", "0x3A-granade-chaff.wav"),
     ("inicio", "0x7B-AAhhhh.wav"),

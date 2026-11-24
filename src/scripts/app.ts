@@ -84,7 +84,12 @@ if (TAURI) {
   const w = getCurrentWindow();
   $("w-min").addEventListener("click", () => w.minimize());
   $("w-max").addEventListener("click", () => w.toggleMaximize());
-  $("w-close").addEventListener("click", () => w.close());
+  // El sonido de cierre dura menos de un segundo: se espera a que acabe antes de esconder la ventana.
+  $("w-close").addEventListener("click", async () => {
+    const a = await sonar("cerrar", undefined, .6);
+    if (a) await new Promise(r => { a.addEventListener("ended", r, { once: true }); setTimeout(r, 1100); });
+    w.close();
+  });
   $("app").addEventListener("dblclick", e => {
     if ((e.target as HTMLElement).closest("[data-tauri-drag-region]")) w.toggleMaximize();
   });
@@ -128,7 +133,7 @@ function countUp(root: HTMLElement | null, siempre = false) {
 }
 
 /* ---------- sonidos ---------- */
-type Sonido = "pestana" | "encargo" | "graficas" | "inicio";
+type Sonido = "pestana" | "encargo" | "graficas" | "inicio" | "error" | "radar" | "combo" | "cerrar";
 const sonidosCache = new Map<Sonido, string>();
 let sonidosOn = (() => { try { return localStorage.getItem("life-sonidos") !== "0"; } catch { return true; } })();
 
@@ -160,9 +165,41 @@ async function sonar(n: Sonido, max?: number, volumen = .7) {
       }, 30);
     }, max);
   }
+  return a;
 }
 /** Las gráficas de dinero y de redes se animan ~1,6 s: el chaff suena mientras tanto. */
 const sonarGraficas = () => sonar("graficas", 1500, .45);
+/** La forma del radar entra a los 0,2 s (`radarIn`); suena con ella, una vez aunque se redibuje. */
+let ultimoRadar = 0;
+function sonarRadar() {
+  if (Date.now() - ultimoRadar < 1500) return;
+  ultimoRadar = Date.now();
+  setTimeout(() => sonar("radar", undefined, .5), 200);
+}
+
+/* Error: un aviso que pasa a rojo (mensajes `.msg.err` y luces de fuente `.src.err`) o un «Desconectar». */
+let ultimoError = 0;
+function sonarError() {
+  if (Date.now() - ultimoError < 1200) return;
+  ultimoError = Date.now();
+  sonar("error", undefined, .55);
+}
+new MutationObserver(rs => {
+  for (const r of rs) {
+    const el = r.target as Element;
+    if (!el.classList.contains("err")) continue;
+    // Los mensajes suenan cada vez que muestran un error; las luces, solo al pasar a error.
+    if (el.classList.contains("msg") || (el.classList.contains("src") && !/\berr\b/.test(r.oldValue ?? ""))) { sonarError(); return; }
+  }
+}).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+document.addEventListener("click", e => { if ((e.target as Element).closest?.('#v-conexiones button.danger[id$="-off"]')) sonarError(); });
+
+/* Combos: suena al abrirse y al elegir. */
+document.addEventListener("pointerdown", e => { if ((e.target as Element).closest?.("select:not(:disabled)")) sonar("combo", undefined, .5); });
+document.addEventListener("keydown", e => {
+  if (e.target instanceof HTMLSelectElement && (e.key === " " || e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) sonar("combo", undefined, .5);
+});
+document.addEventListener("change", e => { if (e.target instanceof HTMLSelectElement) sonar("pestana", undefined, .6); }, true);
 
 /* ---------- pestañas ---------- */
 const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]')];
@@ -172,6 +209,7 @@ function select(tab: HTMLButtonElement, silencio = false) {
   if (!silencio && cambia) {
     sonar("pestana", undefined, .6);
     if (vista === "v-dinero" || vista === "v-redes") sonarGraficas();
+    if (vista === "v-hoy" && radarState.length) sonarRadar();
   }
   if (vista === "v-redes") cargarTokens();
   tabs.forEach(t => {
@@ -267,6 +305,7 @@ function dibujarRadar() {
     const g = svgEl("g", { class: "radar-shape" }, svg);
     svgEl("polygon", { points: poly(cur), fill: K.ph, "fill-opacity": .22, stroke: K.ph, "stroke-width": 1.6, class: "glow" }, g);
     EJES.forEach(([k], i) => { const [x, y] = pt(i, cur.valores[k] ?? 0); svgEl("rect", { x: x - 2.5, y: y - 2.5, width: 5, height: 5, fill: K.hi }, g); });
+    if (!$("v-hoy").hidden && document.visibilityState === "visible") sonarRadar();
     // Zonas invisibles por eje (encima de todo): al pasar el ratón o llegar con el tabulador, su motivo.
     EJES.forEach(([k, nombre], i) => {
       const a0 = -Math.PI / 2 + (i - .5) * 2 * Math.PI / n, a1 = -Math.PI / 2 + (i + .5) * 2 * Math.PI / n, RR = R * 1.55;
@@ -298,7 +337,7 @@ function dibujarRadar() {
   if (!radarCalculando) {
     const n = notaRadar(cur);
     radarNotaBase = cur
-      ? `${esc(n.resumen)}${n.resumen ? " " : ""}<span class="muted">· CLAUDE ${stamp(cur.guardado)} · PASA EL RATÓN POR CADA EJE</span>`
+      ? `${esc(n.resumen)}${n.resumen ? " " : ""}<span class="muted">· CLAUDE ${stamp(cur.guardado)}</span>`
       : TAURI && clState?.sesion ? `<span class="muted">CLAUDE PUNTUARÁ LA SEMANA TRAS EL PARTE DE HOY</span>` : `<span class="muted">NECESITA CLAUDE (F5)</span>`;
     $("radar-nota").innerHTML = radarNotaBase;
   }
@@ -1819,8 +1858,14 @@ function cats(m: Mes | undefined, media: Map<string, number>) {
 }
 
 let soloSinCategoria = false;
+/** Las categorías se ven como texto; el botón «Editar categorías» las cambia por combos. */
+let editandoCats = false;
 function movs(list: Mov[]) {
   const el = $("movs");
+  const btn = $<HTMLButtonElement>("movs-edit");
+  btn.textContent = editandoCats ? "Hecho" : "Editar categorías";
+  btn.setAttribute("aria-pressed", String(editandoCats));
+  el.classList.toggle("editando", editandoCats);
   const rows = soloSinCategoria
     ? list.filter(m => { if (!sinCategoria([m]).size) return false; const ia = rvState.categorias_ia?.[m.comercio]; return !ia || ia === "Otros"; }).reverse()
     : list.filter(m => m.fecha.startsWith(mesSel ?? "-")).reverse();
@@ -1829,12 +1874,14 @@ function movs(list: Mov[]) {
   if (!rows.length) { el.innerHTML = `<p class="muted">${list.length ? "Sin movimientos este mes." : "Conecta Revolut en F5 para ver tus movimientos."}</p>`; return; }
   el.innerHTML = rows.map(m => {
     const c = catOf(m);
-    const opts = CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("");
+    const cat = editandoCats
+      ? `<select data-comercio="${esc(m.comercio)}" aria-label="Categoría de ${esc(m.descripcion)}">${CATS.map(k => `<option${k === c ? " selected" : ""}>${k}</option>`).join("")}</select>`
+      : `<span class="cat-v">${esc(c)}</span>`;
     const extra = [m.concepto ? `«${m.concepto}»` : "", m.estado === "pendiente" ? "pendiente" : "", m.divisa !== "EUR" ? m.divisa : "", m.producto !== "cuenta" ? m.producto : ""].filter(Boolean).join(" · ");
     return `<div class="mov${c === "Interno" ? " int" : c === "Nómina" ? " nomina" : ""}">
       <span class="muted">${ddmm(fechaDe(m.fecha))}</span>
       <span class="ds" title="${esc(m.descripcion)}">${esc(m.descripcion)}${extra ? `<small>${esc(extra)}</small>` : ""}</span>
-      <select data-comercio="${esc(m.comercio)}" aria-label="Categoría de ${esc(m.descripcion)}">${opts}</select>
+      ${cat}
       <span class="amt money${m.importe > 0 ? " pos" : ""}">${m.importe > 0 ? "+" : ""}${fmt(m.importe, 2)}${m.divisa === "EUR" ? " €" : ""}</span>
     </div>`;
   }).join("");
@@ -2062,6 +2109,7 @@ $("flow").addEventListener("click", e => {
 const rvMsg = (text: string, kind: "ok" | "err" | "" = "") =>
   document.querySelectorAll<HTMLElement>("[data-rv-msg]").forEach(m => { m.textContent = text; m.className = "msg" + (kind ? " " + kind : ""); });
 
+$("movs-edit").addEventListener("click", () => { editandoCats = !editandoCats; movs(rvState.movimientos); });
 $("movs").addEventListener("change", async e => {
   const sel = e.target as HTMLSelectElement;
   const comercio = sel.dataset.comercio;
