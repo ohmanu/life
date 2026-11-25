@@ -355,6 +355,7 @@ button { font: inherit; }
 .patri .d { font-size: 11px; }
 .patri .d .up { color: var(--ph); }
 .patri .d .down { color: var(--alert); }
+.patri .d.aviso { color: var(--hi); }
 .patri-form { align-items: end; margin-top: var(--s3); }
 .lbl { display: grid; gap: 4px; flex: 1; min-width: 220px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--grid); }
 .lbl input { min-width: 0; }

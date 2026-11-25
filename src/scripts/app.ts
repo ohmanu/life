@@ -1798,7 +1798,8 @@ function patri(s: ReturnType<typeof saldos>) {
     <div><span class="k">Hucha${h?.estimado ? " ≈" : ""}</span><span class="v money">${h ? eur(h.saldo, 2) : "—"}</span>
       <span class="d muted">${h ? `${h.base.manual ? "puesto a mano" : "último saldo conocido"} el ${ddmm(fechaDe(h.base.fecha))}: <span class="money">${eur(h.base.saldo, 2)}</span>` : "ajústala a mano"}</span>
       ${h && (h.traspasos || h.intereses > 0) ? `<span class="d muted">${h.traspasos ? `traspasos <span class="money">${h.traspasos > 0 ? "+" : ""}${fmt(h.traspasos, 2)} €</span>` : ""}${h.traspasos && h.intereses > 0 ? " · " : ""}${h.intereses > 0 ? `intereses ≈ <span class="money">+${fmt(h.intereses, 2)} €</span>` : ""}</span>` : ""}
-      ${h && h.diario > 0 ? `<span class="d muted">${h.tin !== null ? `${fmt(h.tin, 2)} % TIN` : "ritmo del último mes"} · <span class="money">≈ ${fmt(h.diario, 2)} €</span>/día netos</span>` : ""}</div>
+      ${h && h.diario > 0 ? `<span class="d muted">${h.tin !== null ? `${fmt(h.tin, 2)} % TIN` : "ritmo del último mes"} · <span class="money">≈ ${fmt(h.diario, 2)} €</span>/día netos</span>` : ""}
+      ${h && h.diario <= 0 ? `<span class="d aviso">sin intereses: pon el TIN de la hucha en «Ajustar a mano»</span>` : ""}</div>
     <div><span class="k">Oro</span><span class="v money">${o ? eur(o.valor, 2) : "—"}</span>
       <span class="d muted">${o ? `${fmt(o.onzas, 6)} oz${o.precio ? ` × ${fmt(o.precio, 2)} €/oz` : " · valor del resumen"}` : "sin oro"}</span>
       ${o?.ganancia !== null && o?.ganancia !== undefined && o.coste ? `<span class="d">costó <span class="money">${eur(o.coste)}</span> · <span class="${o.ganancia >= 0 ? "up" : "down"} money">${o.ganancia >= 0 ? "+" : ""}${fmt(o.ganancia, 2)} € (${pct(o.ganancia, o.coste)})</span></span>` : ""}</div>
