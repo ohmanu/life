@@ -84,12 +84,23 @@ if (TAURI) {
   const w = getCurrentWindow();
   $("w-min").addEventListener("click", () => w.minimize());
   $("w-max").addEventListener("click", () => w.toggleMaximize());
-  // El sonido de cierre dura menos de un segundo: se espera a que acabe antes de esconder la ventana.
+  // Cierre como el de un códec: la animación (`body.cerrando`, 0,95 s) y el sonido van a la vez, y la
+  // ventana se esconde cuando acaban los dos. La clase se quita al volver a mostrarla.
+  let cerrando = false;
   $("w-close").addEventListener("click", async () => {
+    if (cerrando) return;
+    cerrando = true;
+    document.body.classList.add("cerrando");
+    const anim = new Promise(r => setTimeout(r, 950));
     const a = await sonar("cerrar", undefined, .6);
-    if (a) await new Promise(r => { a.addEventListener("ended", r, { once: true }); setTimeout(r, 1100); });
-    w.close();
+    const son = a ? new Promise(r => { a.addEventListener("ended", r, { once: true }); setTimeout(r, 1100); }) : null;
+    await Promise.all([anim, son]);
+    await w.close();
+    cerrando = false;
   });
+  const abrir = () => { if (!cerrando) document.body.classList.remove("cerrando"); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") abrir(); });
+  window.addEventListener("focus", abrir);
   $("app").addEventListener("dblclick", e => {
     if ((e.target as HTMLElement).closest("[data-tauri-drag-region]")) w.toggleMaximize();
   });
