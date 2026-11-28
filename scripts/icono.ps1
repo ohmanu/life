@@ -1,7 +1,7 @@
 ﻿# Iconos de LIFE: el 生 con marco, como el logo de la barra de estado, con el brillo de fósforo de la app.
 #   App (1024, con esquinas redondeadas): scripts/icono.ps1 -Out src-tauri/icons/source.png -Size 1024 -Rounded
 #     y luego: npx tauri icon src-tauri/icons/source.png -o <carpeta temporal>, copiando solo los archivos que ya hay en src-tauri/icons.
-#   Bandeja (32 px): scripts/icono.ps1 -Out src-tauri/icons/tray.png -Size 32
+#   Bandeja (32 px): scripts/icono.ps1 -Out src-tauri/icons/tray.png -Size 32 (marco casi al borde y glifo mayor, para que se vea del tamaño de los demás iconos de la bandeja)
 #   Usa la fuente del sistema Yu Gothic UI y los colores de src/styles/console.css (--bg, --ph, --hi).
 #   Se dibuja a 4× (mínimo 512 px) y se reduce al final, para que el brillo salga suave también a 32 px.
 param([string]$Out, [int]$Size, [switch]$Rounded)
@@ -53,12 +53,12 @@ function DrawAlpha($g, $img, [float]$alpha) {
 # Formas: fondo, marco y glifo.
 $radius = if ($Rounded) { $s * 0.12 } else { $s * 0.08 }
 $fondo = RoundRect 0 0 $s $s $radius
-$inset = $s * 0.13
+$inset = if ($Size -lt 64) { $s * 0.03 } else { $s * 0.13 }
 $stroke = if ($Size -lt 64) { $s * 0.05 } else { $s * 0.028 }
 $frame = RoundRect $inset $inset ($s - 2 * $inset) ($s - 2 * $inset) 0
 $fam = New-Object System.Drawing.FontFamily 'Yu Gothic UI'
 $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-$path.AddString([string][char]0x751F, $fam, [int][System.Drawing.FontStyle]::Bold, $s * 0.56, (New-Object System.Drawing.PointF 0, 0), [System.Drawing.StringFormat]::GenericTypographic)
+$path.AddString([string][char]0x751F, $fam, [int][System.Drawing.FontStyle]::Bold, $(if ($Size -lt 64) { $s * 0.66 } else { $s * 0.56 }), (New-Object System.Drawing.PointF 0, 0), [System.Drawing.StringFormat]::GenericTypographic)
 $bnd = $path.GetBounds()
 $m = New-Object System.Drawing.Drawing2D.Matrix
 $m.Translate(($s - $bnd.Width) / 2 - $bnd.X, ($s - $bnd.Height) / 2 - $bnd.Y)
