@@ -1,7 +1,9 @@
 ﻿# Iconos de LIFE: el 生 con marco, como el logo de la barra de estado, con el brillo de fósforo de la app.
 #   App (1024, con esquinas redondeadas): scripts/icono.ps1 -Out src-tauri/icons/source.png -Size 1024 -Rounded
-#     y luego: npx tauri icon src-tauri/icons/source.png -o <carpeta temporal>, copiando solo los archivos que ya hay en src-tauri/icons.
-#   Bandeja (32 px): scripts/icono.ps1 -Out src-tauri/icons/tray.png -Size 32 (marco casi al borde y glifo mayor, para que se vea del tamaño de los demás iconos de la bandeja)
+#     y luego: npx tauri icon src-tauri/icons/source.png -o <carpeta temporal>, copiando solo los archivos que ya hay en src-tauri/icons;
+#     después: scripts/icono.ps1 -Out src-tauri/icons/32x32.png -Size 32 -Rounded y scripts/ico.ps1 (icon.ico con cada tamaño dibujado aparte).
+#   El marco va casi al borde en todos los tamaños, para que en la barra de tareas y la bandeja ocupe lo mismo que los demás iconos.
+#   Bandeja (32 px): scripts/icono.ps1 -Out src-tauri/icons/tray.png -Size 32
 #   Usa la fuente del sistema Yu Gothic UI y los colores de src/styles/console.css (--bg, --ph, --hi).
 #   Se dibuja a 4× (mínimo 512 px) y se reduce al final, para que el brillo salga suave también a 32 px.
 param([string]$Out, [int]$Size, [switch]$Rounded)
@@ -53,12 +55,12 @@ function DrawAlpha($g, $img, [float]$alpha) {
 # Formas: fondo, marco y glifo.
 $radius = if ($Rounded) { $s * 0.12 } else { $s * 0.08 }
 $fondo = RoundRect 0 0 $s $s $radius
-$inset = if ($Size -lt 64) { $s * 0.03 } else { $s * 0.13 }
-$stroke = if ($Size -lt 64) { $s * 0.05 } else { $s * 0.028 }
-$frame = RoundRect $inset $inset ($s - 2 * $inset) ($s - 2 * $inset) 0
+$inset = $s * 0.035
+$stroke = if ($Size -lt 64) { $s * 0.05 } elseif ($Size -lt 256) { $s * 0.04 } else { $s * 0.028 }
+$frame = RoundRect $inset $inset ($s - 2 * $inset) ($s - 2 * $inset) ([Math]::Max(0, $radius - $inset))
 $fam = New-Object System.Drawing.FontFamily 'Yu Gothic UI'
 $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-$path.AddString([string][char]0x751F, $fam, [int][System.Drawing.FontStyle]::Bold, $(if ($Size -lt 64) { $s * 0.66 } else { $s * 0.56 }), (New-Object System.Drawing.PointF 0, 0), [System.Drawing.StringFormat]::GenericTypographic)
+$path.AddString([string][char]0x751F, $fam, [int][System.Drawing.FontStyle]::Bold, $(if ($Size -lt 64) { $s * 0.66 } else { $s * 0.62 }), (New-Object System.Drawing.PointF 0, 0), [System.Drawing.StringFormat]::GenericTypographic)
 $bnd = $path.GetBounds()
 $m = New-Object System.Drawing.Drawing2D.Matrix
 $m.Translate(($s - $bnd.Width) / 2 - $bnd.X, ($s - $bnd.Height) / 2 - $bnd.Y)
